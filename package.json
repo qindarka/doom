@@ -1,0 +1,27 @@
+{
+  "name": "ferrofrag",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ferrofrag — a browser-based multiplayer arena FPS on Three.js + Cloudflare Workers/Durable Objects",
+  "type": "module",
+  "scripts": {
+    "predev": "vite build",
+    "dev": "concurrently -k -n client,server \"vite build --watch\" \"wrangler dev\"",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit",
+    "build": "npm run check && vite build",
+    "pretest:server": "vite build",
+    "test:server": "node scripts/smoke.mjs",
+    "deploy": "npm run build && wrangler deploy"
+  },
+  "dependencies": {
+    "three": "^0.177.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250610.0",
+    "@types/three": "^0.177.0",
+    "concurrently": "^9.1.2",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "wrangler": "^4.19.1"
+  }
+}

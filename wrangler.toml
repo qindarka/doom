@@ -1,0 +1,29 @@
+# Ferrofrag — Cloudflare Worker configuration.
+#
+# One Worker serves both:
+#   - the static client (built by Vite into ./dist/client, served via Workers Static Assets)
+#   - the realtime game server (WebSocket upgrade on /ws, handled by the GameRoom Durable Object)
+#
+# Requests that match a built asset (/, /assets/*.js, ...) are served directly from the
+# asset store; everything else (notably /ws and /api/*) invokes the Worker script.
+
+name = "ferrofrag"
+main = "src/server/index.ts"
+compatibility_date = "2026-05-01"
+
+[assets]
+directory = "./dist/client"
+
+[[durable_objects.bindings]]
+name = "GAME_ROOM"
+class_name = "GameRoom"
+
+# SQLite-backed Durable Object class — required on the Workers Free plan and the
+# recommended storage backend on paid plans. The migration is applied automatically
+# the first time `wrangler deploy` (or the Cloudflare GitHub build) ships this Worker.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameRoom"]
+
+[observability]
+enabled = true

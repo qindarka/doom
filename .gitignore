@@ -1,0 +1,16 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Wrangler local state (local DO storage, cached bundles, login tokens)
+.wrangler/
+.dev.vars
+
+# Editor / OS noise
+.DS_Store
+*.log
+.idea/
+.vscode/*
+!.vscode/extensions.json
