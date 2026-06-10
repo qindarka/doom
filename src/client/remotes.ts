@@ -3,7 +3,8 @@
 
 import * as THREE from "three";
 
-import { INTERP_DELAY_MS, PLAYER_HEIGHT } from "../shared/constants";
+import { DEFAULT_WEAPON, INTERP_DELAY_MS, PLAYER_HEIGHT, WEAPONS } from "../shared/constants";
+import type { WeaponId } from "../shared/constants";
 import type { PlayerScore, PlayerSnapshot } from "../shared/protocol";
 import { nameTexture } from "./textures";
 
@@ -35,55 +36,114 @@ class RemoteAvatar {
   /** The roster identity this avatar was built for (rebuilt if either changes). */
   readonly builtName: string;
   readonly builtColor: number;
-  private readonly body: THREE.Mesh;
   private readonly head: THREE.Group;
   private readonly nameSprite: THREE.Sprite;
+  private gun!: THREE.Group;
+  private legL!: THREE.Group;
+  private legR!: THREE.Group;
+  private armL!: THREE.Group;
+  private weapon: WeaponId = DEFAULT_WEAPON;
   private buffer: Snapshot[] = [];
+  private walkPhase = 0;
+  private lastPose = { x: 0, z: 0, t: 0 };
   dead = false;
   private deathStart = 0;
 
   constructor(score: PlayerScore) {
     this.builtName = score.name;
     this.builtColor = score.color;
-    const color = new THREE.Color(score.color);
 
-    // Torso capsule: radius 0.34, total height ~1.5, base offset so feet = group origin.
-    const bodyMat = new THREE.MeshStandardMaterial({
-      color,
-      roughness: 0.55,
-      metalness: 0.35,
-      emissive: color,
-      emissiveIntensity: 0.12,
+    // Original armored-trooper design: dark undersuit with color-coded armor
+    // plates, a full helmet and a glowing amber visor. Feet sit at the group
+    // origin; total height matches PLAYER_HEIGHT.
+    const armor = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(score.color).multiplyScalar(0.85),
+      roughness: 0.45,
+      metalness: 0.55,
     });
-    this.body = new THREE.Mesh(new THREE.CapsuleGeometry(0.34, 0.82, 6, 14), bodyMat);
-    this.body.position.y = 0.75;
-    this.body.castShadow = true;
-    this.group.add(this.body);
+    const suit = new THREE.MeshStandardMaterial({
+      color: 0x1c2128,
+      roughness: 0.7,
+      metalness: 0.35,
+    });
+    const visorMat = new THREE.MeshBasicMaterial({ color: 0xffb649 });
 
-    // Head with a glowing visor strip facing -Z (the avatar's forward).
+    const addBox = (
+      parent: THREE.Object3D,
+      mat: THREE.Material,
+      w: number,
+      h: number,
+      d: number,
+      x: number,
+      y: number,
+      z: number,
+    ): THREE.Mesh => {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      mesh.position.set(x, y, z);
+      mesh.castShadow = true;
+      parent.add(mesh);
+      return mesh;
+    };
+
+    // Legs pivot at the hips so they can swing while walking.
+    this.legL = new THREE.Group();
+    this.legL.position.set(-0.15, 0.92, 0);
+    addBox(this.legL, armor, 0.2, 0.42, 0.24, 0, -0.21, 0); // thigh plate
+    addBox(this.legL, suit, 0.16, 0.42, 0.18, 0, -0.62, 0); // shin
+    addBox(this.legL, armor, 0.18, 0.12, 0.3, 0, -0.86, -0.03); // boot
+    this.group.add(this.legL);
+    this.legR = new THREE.Group();
+    this.legR.position.set(0.15, 0.92, 0);
+    addBox(this.legR, armor, 0.2, 0.42, 0.24, 0, -0.21, 0);
+    addBox(this.legR, suit, 0.16, 0.42, 0.18, 0, -0.62, 0);
+    addBox(this.legR, armor, 0.18, 0.12, 0.3, 0, -0.86, -0.03);
+    this.group.add(this.legR);
+
+    // Torso: undersuit core, sculpted chest plate, belt, back unit.
+    addBox(this.group, suit, 0.42, 0.5, 0.26, 0, 1.18, 0);
+    addBox(this.group, armor, 0.46, 0.34, 0.3, 0, 1.27, -0.01); // chest plate
+    addBox(this.group, armor, 0.36, 0.1, 0.26, 0, 0.97, 0); // belt
+    addBox(this.group, suit, 0.3, 0.34, 0.14, 0, 1.25, 0.2); // back unit
+    addBox(this.group, visorMat, 0.1, 0.04, 0.02, 0, 1.36, -0.155); // chest lamp
+
+    // Pauldrons.
+    addBox(this.group, armor, 0.18, 0.16, 0.26, -0.3, 1.42, 0);
+    addBox(this.group, armor, 0.18, 0.16, 0.26, 0.3, 1.42, 0);
+
+    // Arms: the right one is posed onto the gun; the left swings while walking.
+    this.armL = new THREE.Group();
+    this.armL.position.set(-0.31, 1.4, 0);
+    addBox(this.armL, suit, 0.12, 0.34, 0.14, 0, -0.18, 0);
+    addBox(this.armL, armor, 0.13, 0.2, 0.15, 0, -0.43, 0); // forearm guard
+    this.group.add(this.armL);
+    const armR = new THREE.Group();
+    armR.position.set(0.31, 1.4, 0);
+    armR.rotation.x = -0.9;
+    addBox(armR, suit, 0.12, 0.34, 0.14, 0, -0.18, 0);
+    addBox(armR, armor, 0.13, 0.2, 0.15, 0, -0.43, 0);
+    this.group.add(armR);
+
+    // Helmet: rounded dome over a jaw guard, wide glowing visor, side fins.
     this.head = new THREE.Group();
-    const skull = new THREE.Mesh(
-      new THREE.BoxGeometry(0.42, 0.36, 0.42),
-      new THREE.MeshStandardMaterial({ color: 0x2a313a, roughness: 0.5, metalness: 0.6 }),
-    );
-    skull.castShadow = true;
-    this.head.add(skull);
-    const visor = new THREE.Mesh(
-      new THREE.BoxGeometry(0.3, 0.09, 0.05),
-      new THREE.MeshBasicMaterial({ color: score.color }),
-    );
-    visor.position.set(0, 0.03, -0.21);
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 12), armor);
+    dome.scale.set(1, 0.92, 1.08);
+    dome.position.y = 0.06;
+    dome.castShadow = true;
+    this.head.add(dome);
+    addBox(this.head, suit, 0.24, 0.14, 0.26, 0, -0.05, 0.01); // jaw guard
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.06), visorMat);
+    visor.position.set(0, 0.04, -0.15);
     this.head.add(visor);
-    this.head.position.y = PLAYER_HEIGHT - 0.22;
+    addBox(this.head, armor, 0.05, 0.08, 0.16, -0.17, 0.02, 0.02); // ear fins
+    addBox(this.head, armor, 0.05, 0.08, 0.16, 0.17, 0.02, 0.02);
+    this.head.position.y = PLAYER_HEIGHT - 0.2;
     this.group.add(this.head);
 
-    // Gun stub on the right side.
-    const gun = new THREE.Mesh(
-      new THREE.BoxGeometry(0.1, 0.12, 0.55),
-      new THREE.MeshStandardMaterial({ color: 0x14181d, roughness: 0.4, metalness: 0.7 }),
-    );
-    gun.position.set(0.32, 1.25, -0.25);
-    this.group.add(gun);
+    // Gun stub on the right side, rebuilt when the held weapon changes.
+    this.gun = new THREE.Group();
+    this.gun.position.set(0.32, 1.25, -0.25);
+    this.group.add(this.gun);
+    this.buildGun(DEFAULT_WEAPON);
 
     this.nameSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: nameTexture(score.name, score.color), transparent: true }),
@@ -99,6 +159,44 @@ class RemoteAvatar {
   muzzle(): THREE.Vector3 {
     const v = new THREE.Vector3(0.32, 1.25, -0.6);
     return this.group.localToWorld(v);
+  }
+
+  setWeapon(w: WeaponId): void {
+    if (w === this.weapon) return;
+    this.weapon = w;
+    this.buildGun(w);
+  }
+
+  private buildGun(w: WeaponId): void {
+    for (const child of [...this.gun.children]) {
+      this.gun.remove(child);
+      if (child instanceof THREE.Mesh) {
+        child.geometry.dispose();
+        (child.material as THREE.Material).dispose();
+      }
+    }
+    const dark = new THREE.MeshStandardMaterial({ color: 0x14181d, roughness: 0.4, metalness: 0.7 });
+    if (w === "scrapshot") {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.15, 0.5), dark);
+      this.gun.add(body);
+      const band = new THREE.Mesh(
+        new THREE.BoxGeometry(0.16, 0.1, 0.07),
+        new THREE.MeshBasicMaterial({ color: WEAPONS.scrapshot.color }),
+      );
+      band.position.set(0, 0, -0.26);
+      this.gun.add(band);
+    } else if (w === "arcwelder") {
+      const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.75), dark);
+      this.gun.add(body);
+      const coil = new THREE.Mesh(
+        new THREE.TorusGeometry(0.07, 0.016, 6, 12),
+        new THREE.MeshBasicMaterial({ color: WEAPONS.arcwelder.color }),
+      );
+      coil.position.set(0, 0, -0.3);
+      this.gun.add(coil);
+    } else {
+      this.gun.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.55), dark));
+    }
   }
 
   push(snap: PlayerSnapshot, now: number): void {
@@ -174,6 +272,19 @@ class RemoteAvatar {
     this.group.position.set(x, y, z);
     this.group.rotation.y = yaw;
     this.head.rotation.x = pitch * 0.7;
+
+    // Walk cycle: swing legs and the off-hand arm by horizontal speed.
+    const now = performance.now();
+    const dt = Math.min(0.1, Math.max(0.001, (now - this.lastPose.t) / 1000));
+    const speed = Math.hypot(x - this.lastPose.x, z - this.lastPose.z) / dt;
+    this.lastPose = { x, z, t: now };
+    if (this.dead) return;
+    const clamped = Math.min(speed, 10);
+    this.walkPhase += clamped * dt * 6;
+    const swing = Math.sin(this.walkPhase) * Math.min(1, clamped / 6) * 0.55;
+    this.legL.rotation.x = swing;
+    this.legR.rotation.x = -swing;
+    this.armL.rotation.x = -swing * 0.7;
   }
 
   dispose(scene: THREE.Scene): void {
@@ -233,6 +344,7 @@ export class Remotes {
       if (!avatar) continue;
       avatar.push(snap, now);
       avatar.setDead(snap.dead, now);
+      avatar.setWeapon(snap.w);
     }
   }
 

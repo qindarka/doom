@@ -1,10 +1,21 @@
 // Entry point: landing page (display name → Join) that hands off to the Game.
 
 import "./style.css";
-import { MAX_PLAYERS } from "../shared/constants";
+import { MAX_PLAYERS, SOLO_ROOM_PREFIX } from "../shared/constants";
 import { Game } from "./game";
+import { Music } from "./music";
 
 const NAME_KEY = "ferrofrag.name";
+
+// Generative ambient starts on the menu (after the first user gesture —
+// browsers require one) and shifts mode once you're in the arena.
+const music = new Music();
+const startMenuMusic = () => {
+  music.unlock();
+  music.setMode("menu");
+};
+document.addEventListener("pointerdown", startMenuMusic, { once: true });
+document.addEventListener("keydown", startMenuMusic, { once: true });
 
 const app = document.getElementById("app");
 if (!app) throw new Error("#app missing");
@@ -40,6 +51,19 @@ joinBtn.textContent = "Deploy";
 
 joinRow.append(nameInput, joinBtn);
 
+const practiceBtn = document.createElement("button");
+practiceBtn.className = "practice";
+practiceBtn.textContent = "Practice vs bots";
+
+const musicBtn = document.createElement("button");
+musicBtn.className = "music-toggle";
+musicBtn.title = "Toggle music (M)";
+musicBtn.textContent = music.isMuted ? "♪ off" : "♪ on";
+musicBtn.addEventListener("click", () => {
+  const muted = music.toggle();
+  musicBtn.textContent = muted ? "♪ off" : "♪ on";
+});
+
 const statusLine = document.createElement("div");
 statusLine.className = "status-line";
 
@@ -48,9 +72,12 @@ hint.className = "controls-hint";
 const hintLines = [
   ["WASD", "move"],
   ["MOUSE", "aim"],
-  ["CLICK", "fire the riveter"],
+  ["CLICK", "fire"],
   ["SPACE", "jump"],
+  ["1-4", "weapons (grab them at the Armory)"],
+  ["CTRL", "cycle weapons"],
   ["TAB", "scoreboard"],
+  ["M", "music"],
 ] as const;
 for (const [key, what] of hintLines) {
   const b = document.createElement("b");
@@ -66,7 +93,7 @@ if ("ontouchstart" in window) {
   hint.append(warn);
 }
 
-overlay.append(title, subtitle, joinRow, statusLine, hint);
+overlay.append(title, subtitle, joinRow, practiceBtn, statusLine, hint, musicBtn);
 app.append(overlay);
 
 // --- Room occupancy on the landing page --------------------------------------------
@@ -107,7 +134,7 @@ startStatusPolling();
 
 let game: Game | null = null;
 
-function join(): void {
+function join(room: string | null = null): void {
   const name = nameInput.value.trim();
   if (!name) {
     statusLine.classList.add("error");
@@ -119,15 +146,19 @@ function join(): void {
 
   localStorage.setItem(NAME_KEY, name);
   statusLine.classList.remove("error");
-  statusLine.textContent = "connecting…";
+  statusLine.textContent = room ? "starting practice…" : "connecting…";
   joinBtn.disabled = true;
+  practiceBtn.disabled = true;
   nameInput.disabled = true;
+  music.unlock();
+  music.setMode("menu");
 
-  game = new Game(app as HTMLElement, name);
+  game = new Game(app as HTMLElement, name, room, music);
 
   game.onJoined = () => {
     overlay.classList.add("hidden");
     stopStatusPolling();
+    music.setMode("game");
   };
 
   game.onFull = () => {
@@ -142,7 +173,11 @@ function join(): void {
   };
 }
 
-joinBtn.addEventListener("click", join);
+joinBtn.addEventListener("click", () => join());
+practiceBtn.addEventListener("click", () => {
+  // A fresh private room per practice session.
+  join(`${SOLO_ROOM_PREFIX}${crypto.randomUUID().slice(0, 12)}`);
+});
 nameInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") join();
 });

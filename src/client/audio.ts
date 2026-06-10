@@ -121,4 +121,49 @@ export class Sfx {
     const t = this.ctx.currentTime;
     this.tone(t, "sine", 220, 620, 0.25, 0.2);
   }
+
+  explosion(pan: number, vol: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 320, 0.9 * vol, 0.5, pan);
+    this.burst(t, 1100, 0.4 * vol, 0.25, pan);
+    this.tone(t, "sine", 110, 28, 0.8 * vol, 0.5, pan);
+  }
+
+  heal(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "sine", 320, 520, 0.2, 0.14);
+    this.tone(t + 0.1, "sine", 520, 780, 0.2, 0.2);
+  }
+
+  /** One lub-dub, played by the game loop while at critical health. */
+  heartbeat(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "sine", 68, 50, 0.5, 0.12);
+    this.tone(t + 0.16, "sine", 60, 45, 0.35, 0.1);
+  }
+
+  pickup(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "square", 440, 440, 0.18, 0.06);
+    this.tone(t + 0.07, "square", 880, 880, 0.18, 0.1);
+    this.burst(t, 3200, 0.15, 0.08);
+  }
+
+  throwNade(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 900, 0.3, 0.12);
+    this.tone(t, "sine", 300, 480, 0.12, 0.1);
+  }
+
+  weaponSwitch(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 1400, 0.2, 0.05);
+    this.tone(t + 0.03, "square", 240, 240, 0.12, 0.05);
+  }
 }

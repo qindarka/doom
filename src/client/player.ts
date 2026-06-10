@@ -10,6 +10,7 @@ import {
   GROUND_ACCEL,
   JUMP_VELOCITY,
   MOVE_SPEED,
+  PLAYER_HEIGHT,
   PLAYER_RADIUS,
 } from "../shared/constants";
 import { ARENA_HALF, SOLIDS } from "../shared/map";
@@ -20,6 +21,8 @@ import type { Input } from "./input";
 const MOUSE_SENS = 0.0023;
 const MAX_PITCH = 1.55;
 const EPS = 1e-3;
+/** Max ledge height climbed automatically while grounded (stairs, kerbs). */
+const STEP_UP = 0.55;
 
 export class LocalPlayer {
   pos: Vec3 = vec3();
@@ -101,6 +104,17 @@ export class LocalPlayer {
     for (const solid of SOLIDS) {
       const box = playerAABB(this.pos);
       if (!aabbIntersects(box, solid)) continue;
+
+      // Auto-step: a grounded walker climbs low ledges (stairs) if the space
+      // on top is clear.
+      if (this.grounded && solid.max.y <= this.pos.y + STEP_UP) {
+        const lifted = vec3(this.pos.x, solid.max.y + EPS, this.pos.z);
+        if (!this.collidesAny(lifted)) {
+          this.pos.y = solid.max.y;
+          continue;
+        }
+      }
+
       if (delta > 0) {
         this.pos[axis] = solid.min[axis] - PLAYER_RADIUS - EPS;
       } else {
@@ -108,6 +122,14 @@ export class LocalPlayer {
       }
       this.vel[axis] = 0;
     }
+  }
+
+  private collidesAny(at: Vec3): boolean {
+    const box = playerAABB(at);
+    for (const solid of SOLIDS) {
+      if (aabbIntersects(box, solid)) return true;
+    }
+    return false;
   }
 
   private moveVertical(delta: number): void {
@@ -138,8 +160,17 @@ export class LocalPlayer {
       this.grounded = false;
       this.pos.y = next;
     } else {
+      // Rising: bump the head on overhangs (decks, the shop roof, the screen).
       this.grounded = false;
       this.pos.y = next;
+      const box = playerAABB(this.pos);
+      for (const solid of SOLIDS) {
+        if (aabbIntersects(box, solid) && solid.min.y >= feet + 0.2) {
+          this.pos.y = Math.max(feet, solid.min.y - PLAYER_HEIGHT - EPS);
+          this.vel.y = 0;
+          break;
+        }
+      }
     }
   }
 }

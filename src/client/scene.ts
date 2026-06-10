@@ -1,11 +1,102 @@
 // Builds the dark-industrial arena from the shared map data, so the rendered
-// world is exactly the world the server raycasts against.
+// world is exactly the world the server raycasts against. Also owns the
+// jumbotron: a live canvas texture showing the scoreboard, mounted on the
+// screen slab above the central bastion.
 
 import * as THREE from "three";
 
 import { ARENA_HALF, OBSTACLES, SPAWN_POINTS, WALLS, WALL_HEIGHT } from "../shared/map";
 import type { AABB } from "../shared/map";
+import type { PlayerScore } from "../shared/protocol";
 import { crateTexture, floorTexture, monolithTexture, wallTexture } from "./textures";
+
+/** The live scoreboard screen drawn onto the jumbotron slab. */
+export class ScreenBoard {
+  readonly texture: THREE.CanvasTexture;
+  private readonly canvas: HTMLCanvasElement;
+  private readonly ctx: CanvasRenderingContext2D;
+  private feedLine = "WELCOME TO THE ARENA";
+
+  constructor() {
+    this.canvas = document.createElement("canvas");
+    this.canvas.width = 512;
+    this.canvas.height = 256;
+    const ctx = this.canvas.getContext("2d");
+    if (!ctx) throw new Error("2D canvas unsupported");
+    this.ctx = ctx;
+    this.texture = new THREE.CanvasTexture(this.canvas);
+    this.texture.colorSpace = THREE.SRGBColorSpace;
+    this.update([], null);
+  }
+
+  update(roster: PlayerScore[], feedLine: string | null): void {
+    if (feedLine) this.feedLine = feedLine.toUpperCase();
+    const c = this.ctx;
+    c.fillStyle = "#021410";
+    c.fillRect(0, 0, 512, 256);
+
+    // scanlines
+    c.fillStyle = "rgba(0,0,0,0.35)";
+    for (let y = 0; y < 256; y += 4) c.fillRect(0, y, 512, 1);
+
+    c.font = "900 30px 'Lucida Console', Monaco, monospace";
+    c.fillStyle = "#33ffd0";
+    c.textAlign = "center";
+    c.fillText("FERROFRAG", 256, 38);
+    c.strokeStyle = "rgba(51,255,208,0.4)";
+    c.lineWidth = 2;
+    c.beginPath();
+    c.moveTo(40, 52);
+    c.lineTo(472, 52);
+    c.stroke();
+
+    const sorted = [...roster].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths).slice(0, 5);
+    c.font = "700 22px 'Lucida Console', Monaco, monospace";
+    let y = 86;
+    for (const p of sorted) {
+      c.fillStyle = `#${p.color.toString(16).padStart(6, "0")}`;
+      c.textAlign = "left";
+      c.fillText(p.name.slice(0, 12), 56, y);
+      c.fillStyle = "#bfe8dd";
+      c.textAlign = "right";
+      c.fillText(`${p.kills} / ${p.deaths}`, 456, y);
+      y += 30;
+    }
+    if (sorted.length === 0) {
+      c.fillStyle = "#1c7a64";
+      c.textAlign = "center";
+      c.fillText("AWAITING OPERATIVES", 256, 130);
+    }
+
+    c.font = "700 18px 'Lucida Console', Monaco, monospace";
+    c.fillStyle = "#ff8844";
+    c.textAlign = "center";
+    c.fillText(this.feedLine.slice(0, 40), 256, 240);
+
+    this.texture.needsUpdate = true;
+  }
+}
+
+/** "ARMORY" sign texture for the shop roof front. */
+function armorySignTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement("canvas");
+  canvas.width = 512;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("2D canvas unsupported");
+  ctx.fillStyle = "#0c0e11";
+  ctx.fillRect(0, 0, 512, 64);
+  ctx.font = "900 44px 'Lucida Console', Monaco, monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "#ff6a22";
+  ctx.shadowBlur = 18;
+  ctx.fillStyle = "#ffa050";
+  ctx.fillText("◆ ARMORY ◆", 256, 34);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
 
 function boxMesh(aabb: AABB, material: THREE.Material): THREE.Mesh {
   const w = aabb.max.x - aabb.min.x;
@@ -22,7 +113,7 @@ function boxMesh(aabb: AABB, material: THREE.Material): THREE.Mesh {
   return mesh;
 }
 
-export function buildScene(): THREE.Scene {
+export function buildScene(): { scene: THREE.Scene; screen: ScreenBoard } {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x07090d);
   scene.fog = new THREE.FogExp2(0x07090d, 0.016);
@@ -127,6 +218,31 @@ export function buildScene(): THREE.Scene {
     roughness: 0.6,
     metalness: 0.55,
   });
+  const stepMat = new THREE.MeshStandardMaterial({
+    map: monolithTexture(1, 0.5),
+    color: 0xb9c4cf,
+    roughness: 0.65,
+    metalness: 0.5,
+  });
+  const deckMat = new THREE.MeshStandardMaterial({
+    map: wallTexture(5, 0.5),
+    color: 0xc4ccd4,
+    roughness: 0.6,
+    metalness: 0.55,
+  });
+  const counterMat = new THREE.MeshStandardMaterial({
+    map: monolithTexture(2, 0.5),
+    color: 0xd0b890,
+    roughness: 0.55,
+    metalness: 0.5,
+  });
+  const screenFrameMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0d11,
+    roughness: 0.4,
+    metalness: 0.8,
+  });
+
+  const screen = new ScreenBoard();
 
   for (const obstacle of OBSTACLES) {
     let mat: THREE.Material;
@@ -146,26 +262,67 @@ export function buildScene(): THREE.Scene {
       case "lowcrate":
         mat = lowCrateMat;
         break;
+      case "step":
+        mat = stepMat;
+        break;
+      case "deck":
+      case "roof":
+        mat = deckMat;
+        break;
+      case "counter":
+        mat = counterMat;
+        break;
+      case "screen":
+        mat = screenFrameMat;
+        break;
     }
     scene.add(boxMesh(obstacle, mat));
 
-    // Teal cap-light on the monolith.
+    const cx = (obstacle.min.x + obstacle.max.x) / 2;
+    const cz = (obstacle.min.z + obstacle.max.z) / 2;
+    const w = obstacle.max.x - obstacle.min.x;
+    const h = obstacle.max.y - obstacle.min.y;
+    const d = obstacle.max.z - obstacle.min.z;
+
+    // Teal cap-light on the bastion.
     if (obstacle.kind === "monolith") {
-      const w = obstacle.max.x - obstacle.min.x;
-      const d = obstacle.max.z - obstacle.min.z;
       const cap = new THREE.Mesh(
         new THREE.BoxGeometry(w - 1, 0.1, d - 1),
         new THREE.MeshBasicMaterial({ color: 0x00614c }),
       );
-      cap.position.set(
-        (obstacle.min.x + obstacle.max.x) / 2,
-        obstacle.max.y + 0.05,
-        (obstacle.min.z + obstacle.max.z) / 2,
-      );
+      cap.position.set(cx, obstacle.max.y + 0.05, cz);
       scene.add(cap);
       const glow = new THREE.PointLight(0x00ffc8, 26, 16, 1.8);
-      glow.position.set(cap.position.x, obstacle.max.y + 1.2, cap.position.z);
+      glow.position.set(cx, obstacle.max.y + 1.2, cz);
       scene.add(glow);
+    }
+
+    // The jumbotron: live scoreboard faces on both sides of the screen slab.
+    if (obstacle.kind === "screen") {
+      const faceMat = new THREE.MeshBasicMaterial({ map: screen.texture });
+      const south = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.5, h - 0.4), faceMat);
+      south.position.set(cx, obstacle.min.y + h / 2, obstacle.max.z + 0.02);
+      scene.add(south);
+      const north = new THREE.Mesh(new THREE.PlaneGeometry(w - 0.5, h - 0.4), faceMat);
+      north.position.set(cx, obstacle.min.y + h / 2, obstacle.min.z - 0.02);
+      north.rotation.y = Math.PI;
+      scene.add(north);
+      const screenGlow = new THREE.PointLight(0x33ffd0, 18, 18, 1.8);
+      screenGlow.position.set(cx, obstacle.min.y - 0.5, cz);
+      scene.add(screenGlow);
+    }
+
+    // The Armory sign on the shop roof's front edge.
+    if (obstacle.kind === "roof") {
+      const sign = new THREE.Mesh(
+        new THREE.PlaneGeometry(6, 0.75),
+        new THREE.MeshBasicMaterial({ map: armorySignTexture(), transparent: true }),
+      );
+      sign.position.set(cx, obstacle.min.y + 0.1, obstacle.max.z + 0.03);
+      scene.add(sign);
+      const signGlow = new THREE.PointLight(0xff8844, 14, 12, 1.8);
+      signGlow.position.set(cx, obstacle.min.y - 0.8, obstacle.max.z + 1.5);
+      scene.add(signGlow);
     }
   }
 
@@ -193,5 +350,5 @@ export function buildScene(): THREE.Scene {
     scene.add(ring);
   }
 
-  return scene;
+  return { scene, screen };
 }

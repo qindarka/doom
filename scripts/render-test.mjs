@@ -125,12 +125,30 @@ async function main() {
     ok(shot.length > 20000, `in-game screenshot is non-trivial (${shot.length} bytes)`);
     console.log(`  (center-row brightness sample: ${lit})`);
 
+    // Free up CPU before the practice page: SwiftShader renders on the CPU and
+    // three live WebGL pages starve each other.
+    await alpha.close();
+    await bravo.close();
+
+    // Practice mode: join a bot arena and capture the troopers.
+    const hermit = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    hermit.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(`hermit: ${msg.text()}`);
+    });
+    hermit.on("pageerror", (err) => errors.push(`hermit: ${err.message}`));
+    await hermit.goto(BASE);
+    await hermit.fill(".join-row input", "Hermit");
+    await hermit.click(".overlay .practice");
+    await hermit.waitForSelector("#hud.active", { timeout: 20000 });
+    const practiceCount = await hermit.textContent(".topbar");
+    ok(practiceCount?.includes("4"), `practice topbar shows 4 operatives (${practiceCount?.trim()})`);
+    await sleep(10000); // bots hunt the idle player; one usually walks into view
+    await hermit.screenshot({ path: "/tmp/ferrofrag-practice.png" });
+    await hermit.close();
+
     const benign = /Autoplay|preload|favicon|SwiftShader|GroupMarkerNotSet|GPU stall/i;
     const realErrors = errors.filter((e) => !benign.test(e));
     ok(realErrors.length === 0, `no console errors (${realErrors.length}: ${realErrors.slice(0, 3).join(" | ")})`);
-
-    await alpha.close();
-    await bravo.close();
   } catch (err) {
     failures.push(String(err.message ?? err));
     console.error(`FATAL: ${err.message ?? err}`);

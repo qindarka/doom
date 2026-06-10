@@ -15,14 +15,14 @@ const WS_URL = `ws://127.0.0.1:${PORT}/ws`;
 
 // Mirrors src/shared/map.ts SPAWN_POINTS, in ring order around the arena.
 const RING = [
-  [0, -21],
-  [14, -14],
-  [21, 0],
-  [14, 14],
-  [0, 21],
-  [-14, 14],
-  [-21, 0],
-  [-14, -14],
+  [8, -29],
+  [20, -20],
+  [22, 0],
+  [20, 20],
+  [0, 22],
+  [-20, 20],
+  [-22, 0],
+  [-20, -20],
 ];
 
 const failures = [];
@@ -43,8 +43,9 @@ function sleep(ms) {
 }
 
 class Client {
-  constructor(label) {
+  constructor(label, url = WS_URL) {
     this.label = label;
+    this.url = url;
     this.messages = [];
     this.closed = false;
     this.closeCode = null;
@@ -52,7 +53,7 @@ class Client {
 
   connect() {
     return new Promise((resolve, reject) => {
-      this.ws = new WebSocket(WS_URL);
+      this.ws = new WebSocket(this.url);
       this.ws.addEventListener("open", () => resolve());
       this.ws.addEventListener("error", () => reject(new Error(`${this.label}: ws error`)));
       this.ws.addEventListener("close", (ev) => {
@@ -94,12 +95,18 @@ class Client {
 
   async join(name, token) {
     await this.connect();
-    this.send({ type: "join", v: 1, name, ...(token ? { token } : {}) });
+    this.send({ type: "join", v: 2, name, ...(token ? { token } : {}) });
     const [welcome] = await this.waitFor((m) => m.type === "welcome" || m.type === "full");
+    // Keep-alive pings like the real client, or the 30s idle kick fires on
+    // long test runs.
+    this.pinger = setInterval(() => {
+      if (!this.closed) this.send({ type: "ping", t: Date.now() });
+    }, 5000);
     return welcome;
   }
 
   close() {
+    clearInterval(this.pinger);
     try {
       this.ws.close();
     } catch {
@@ -236,7 +243,7 @@ async function main() {
     const hits = [];
     for (let shot = 0; shot < 4; shot++) {
       const c = alice.cursor();
-      bob.send({ type: "shoot", o: eye, d, e: wB.e });
+      bob.send({ type: "shoot", o: eye, d, e: wB.e, w: "riveter" });
       const [hit] = await alice.waitFor((m) => m.type === "hit" && m.id === wA.id, { from: c });
       hits.push(hit.hp);
       await sleep(300); // respect the fire-rate cap
@@ -280,7 +287,9 @@ async function main() {
 
     // Fire-rate: 3 instant shoot messages -> only 1 validated shot broadcast.
     const cF = alice.cursor();
-    for (let i = 0; i < 3; i++) bob.send({ type: "shoot", o: eye, d: [0, 0, -1], e: wB.e });
+    for (let i = 0; i < 3; i++) {
+      bob.send({ type: "shoot", o: eye, d: [0, 0, -1], e: wB.e, w: "riveter" });
+    }
     await sleep(600);
     const burstShots = alice.messages
       .slice(cF)
@@ -298,6 +307,111 @@ async function main() {
     ok(wB2.type === "welcome", "Bob reconnects with token");
     const rejoined = wB2.roster.find((p) => p.id === wB2.id);
     ok(rejoined?.kills === 1, `reconnect restores score (kills=${rejoined?.kills})`);
+
+    // --- weapons & pickups -----------------------------------------------------------------
+    console.log("weapons & pickups");
+    const carol = new Client("carol");
+    const wC = await carol.join("Carol");
+    ok(
+      Array.isArray(wC.items) && wC.items.length === 9 && wC.items.every((it) => it.avail),
+      "welcome lists 9 available pickups (weapons + medkits)",
+    );
+
+    // Walk to the Armory counter and reach over it for the Scrapshot (item 0).
+    await walk(carol, wC, 0); // ring node (8,-29)
+    const approach = [
+      [8, -27.5],
+      [3, -27.8],
+      [-2.2, -27.9],
+      [-2.2, -28.45],
+    ];
+    let cur = [wC.spawn[0], wC.spawn[2]];
+    cur = [8, -29];
+    for (const [tx, tz] of approach) {
+      const segDist = Math.hypot(tx - cur[0], tz - cur[1]);
+      const steps = Math.max(1, Math.ceil(segDist / 0.7));
+      for (let i = 1; i <= steps; i++) {
+        carol.send({
+          type: "input",
+          p: [cur[0] + ((tx - cur[0]) * i) / steps, 0, cur[1] + ((tz - cur[1]) * i) / steps],
+          yaw: 0,
+          pitch: 0,
+          e: wC.e,
+        });
+        await sleep(100);
+      }
+      cur = [tx, tz];
+    }
+    const [pickupMsg] = await carol.waitFor((m) => m.type === "pickup");
+    ok(
+      pickupMsg.w === "scrapshot" && pickupMsg.ammo === 8,
+      `counter pickup grants scrapshot with 8 shells (got ${pickupMsg.w}/${pickupMsg.ammo})`,
+    );
+    const [itemMsg] = await alice.waitFor((m) => m.type === "item" && m.id === 0 && !m.avail);
+    ok(itemMsg.id === 0, "item 0 broadcast as taken to everyone");
+
+    // Scrapshot fires 7 server-rolled pellets.
+    const cP = alice.cursor();
+    carol.send({ type: "shoot", o: [cur[0], 1.6, cur[1]], d: [0, 0, 1], e: wC.e, w: "scrapshot" });
+    const [scrapShot] = await alice.waitFor(
+      (m) => m.type === "shot" && m.w === "scrapshot",
+      { from: cP },
+    );
+    ok(scrapShot.rays.length === 7, `scrapshot broadcast carries 7 rays (got ${scrapShot.rays.length})`);
+
+    // An unowned weapon is rejected outright.
+    const cU = alice.cursor();
+    carol.send({ type: "shoot", o: [cur[0], 1.6, cur[1]], d: [0, 0, 1], e: wC.e, w: "arcwelder" });
+    await sleep(400);
+    const arcShots = alice.messages.slice(cU).filter((m) => m.type === "shot" && m.w === "arcwelder");
+    ok(arcShots.length === 0, "shooting an unowned weapon is rejected");
+
+    // Grenades: grab the frag charges from the counter centre, lob one south,
+    // and watch it appear in state snapshots then detonate.
+    const stepsToFrag = [
+      [-1.4, -28.45],
+      [-0.7, -28.45],
+      [0, -28.45],
+    ];
+    for (const [tx, tz] of stepsToFrag) {
+      carol.send({ type: "input", p: [tx, 0, tz], yaw: 0, pitch: 0, e: wC.e });
+      await sleep(100);
+    }
+    const [fragPickup] = await carol.waitFor((m) => m.type === "pickup" && m.w === "frag");
+    ok(fragPickup.ammo === 3, `counter pickup grants 3 frag charges (got ${fragPickup.ammo})`);
+
+    await sleep(1000); // clear the weapon cooldown from the scrapshot test
+    const cN = carol.cursor();
+    carol.send({ type: "shoot", o: [0, 1.6, -28.45], d: [0, 0.2, 0.98], e: wC.e, w: "frag" });
+    const [nadeState] = await carol.waitFor(
+      (m) => m.type === "state" && Array.isArray(m.nades) && m.nades.length > 0,
+      { from: cN },
+    );
+    ok(nadeState.nades.length === 1, "live grenade appears in state snapshots");
+    const [boom] = await carol.waitFor((m) => m.type === "boom", { from: cN, timeout: 4000 });
+    ok(boom.by === wC.id, "grenade detonates with thrower attribution");
+
+    carol.close();
+    await alice.waitFor((m) => m.type === "roster" && m.players.length === 2);
+
+    // --- practice mode (bots) ----------------------------------------------------------------
+    console.log("practice mode");
+    const solo = new Client("solo", `${WS_URL}?room=solo-smoketest0001`);
+    const wS = await solo.join("Hermit");
+    ok(wS.type === "welcome", "practice room join succeeds");
+    ok(wS.roster.length === 4, `practice roster has 1 human + 3 bots (got ${wS.roster.length})`);
+
+    const [s1] = await solo.waitFor((m) => m.type === "state" && m.players.length === 4);
+    await sleep(1600);
+    const cB = solo.cursor();
+    const [s2] = await solo.waitFor((m) => m.type === "state", { from: cB });
+    const botMoved = s1.players.some((p1) => {
+      if (p1.id === wS.id) return false;
+      const p2 = s2.players.find((p) => p.id === p1.id);
+      return p2 && Math.hypot(p2.p[0] - p1.p[0], p2.p[2] - p1.p[2]) > 0.3;
+    });
+    ok(botMoved, "bots roam the arena (position changes between snapshots)");
+    solo.close();
 
     // --- room cap ------------------------------------------------------------------------------
     console.log("room cap");

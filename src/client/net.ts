@@ -33,11 +33,11 @@ export class Net {
   onMessage: (msg: ServerMsg) => void = () => {};
   onStatus: (status: NetStatus) => void = () => {};
 
-  constructor(name: string, token: string | null) {
+  constructor(name: string, token: string | null, room: string | null = null) {
     this.name = name;
     this.token = token;
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    this.url = `${proto}://${location.host}/ws`;
+    this.url = `${proto}://${location.host}/ws${room ? `?room=${encodeURIComponent(room)}` : ""}`;
   }
 
   connect(): void {

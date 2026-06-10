@@ -19,28 +19,53 @@ WebSocket is same-origin and one `git push` deploys everything atomically.
 
 ## Gameplay
 
-- Pointer-lock mouse look, WASD movement, Space to jump — fast arena movement.
-- One hitscan weapon (the **Riveter**): 25 damage, 100 HP, ~4 shots/sec.
+- Pointer-lock mouse look, WASD movement, Space to jump, auto-step up stairs —
+  fast arena movement across two height levels (decks, the central bastion).
+- **Four weapons.** The infinite **Riveter** (25 dmg, ~4/sec) is always with
+  you; grab the rest at the **Armory** counter or at field spawns (respawn 20s):
+  - **Scrapshot** — 7-pellet scatter gun, brutal up close (8 shells)
+  - **Arcwelder** — 70-damage precision beam (5 charges)
+  - **Frag Charge** — thrown grenade with real physics: bounces, 2s fuse, 6m
+    splash that walls actually shield you from (3 charges)
+  - Switch with **1–4** or cycle with **Ctrl** (Windows and macOS).
+- **Medkits** (+50 integrity) under each side deck and one exposed mid-field;
+  only consumable while hurt.
 - **Server-validated combat.** Clients only *claim* shots; the Durable Object
-  re-raycasts every shot against its own view of the world (players + geometry),
-  enforces fire-rate, muzzle-origin, movement-speed and wall-embedding checks.
+  re-raycasts every pellet against its own view of the world, simulates every
+  grenade itself, and enforces fire-rate, ammo, muzzle-origin, movement-speed,
+  anti-fly and wall-embedding checks.
+- Health states are unmissable: the integrity panel shifts OPTIMAL → DAMAGED →
+  CRITICAL, a red vignette closes in as you near death, and your heartbeat gets
+  audible below 30.
 - Die → killfeed + death screen → auto-respawn after 3s at the spawn point
-  farthest from living enemies.
-- Live scoreboard (hold **Tab**), kills/deaths per player.
+  farthest from living enemies (pickups drop on death).
+- Live scoreboard (hold **Tab**) — also mirrored on the **jumbotron** above the
+  central bastion, with the latest frag on its ticker.
+- **Practice mode**: one click on the landing page drops you into a private
+  arena against 3 AI bots that roam waypoints, take cover-aware shots, lob
+  grenades at mid-range, and grab pickups.
+- Generative, key-free industrial ambient soundtrack (toggle **M**) — sparse on
+  the menu, heartbeat-pulse layer in the arena. All audio is synthesized; the
+  repo contains zero binary assets.
 - Room cap of 10; extra players get a friendly "room full" message.
-- Drop and reconnect within 60s and your score survives (reconnect token).
+- Drop and reconnect within 60s and your score *and* combat state survive
+  (reconnect token) — disconnecting is never a heal.
 
 ## Project layout
 
 ```
 index.html              Vite entry page
-src/client/             Three.js client (scene, input, movement, weapon,
-                        interpolation, HUD, WebAudio sfx, networking)
-src/server/index.ts     Worker entry: routes /ws + /api/status to the room
-src/server/GameRoom.ts  The Durable Object: roster, 20Hz tick, hit validation
+src/client/             Three.js client (scene+jumbotron, input, movement,
+                        weapons/viewmodels, pickups, grenades, interpolated
+                        trooper avatars, HUD, generative music, WebAudio sfx)
+src/server/index.ts     Worker entry: routes /ws (+?room=solo-*) and /api/status
+src/server/GameRoom.ts  The Durable Object: roster, 20Hz tick, hitscan + grenade
+                        simulation, pickups, anti-cheat, practice bots
+src/server/bots.ts      Bot navigation graph + AI state
 src/shared/             Protocol, constants, arena geometry, math — imported by
                         BOTH sides so client and server always agree on the map
 scripts/smoke.mjs       End-to-end protocol test against `wrangler dev`
+scripts/render-test.mjs Headless-browser test (needs `npm i --no-save playwright`)
 wrangler.toml           Worker + Durable Object + static assets config
 ```
 

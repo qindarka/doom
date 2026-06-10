@@ -3,6 +3,7 @@
 
 export class Input {
   private keys = new Set<string>();
+  private pressed: string[] = [];
   private dx = 0;
   private dy = 0;
   firing = false;
@@ -21,6 +22,7 @@ export class Input {
         this.scoreboardHeld = true;
         return;
       }
+      if (!e.repeat) this.pressed.push(e.code);
       this.keys.add(e.code);
     });
 
@@ -81,6 +83,14 @@ export class Input {
     const out = { dx: this.dx, dy: this.dy };
     this.dx = 0;
     this.dy = 0;
+    return out;
+  }
+
+  /** Key codes pressed (not held) since the previous call. */
+  consumePressed(): string[] {
+    if (this.pressed.length === 0) return this.pressed;
+    const out = this.pressed;
+    this.pressed = [];
     return out;
   }
 }

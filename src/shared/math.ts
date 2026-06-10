@@ -90,3 +90,21 @@ export function rayAABBs(origin: Vec3, dir: Vec3, boxes: AABB[], maxT: number): 
   }
   return best;
 }
+
+/**
+ * A random direction within a cone of half-angle `maxAngle` around `dir`
+ * (uniform over the cone disc). Used for shotgun pellet scatter and bot aim
+ * error; the server's roll is authoritative, client rolls are visual-only.
+ */
+export function perturbDir(dir: Vec3, maxAngle: number): Vec3 {
+  if (maxAngle <= 0) return dir;
+  const up = Math.abs(dir.y) < 0.99 ? vec3(0, 1, 0) : vec3(1, 0, 0);
+  // u = normalize(dir × up), v = dir × u
+  const u = normalize(vec3(dir.y * up.z - dir.z * up.y, dir.z * up.x - dir.x * up.z, dir.x * up.y - dir.y * up.x));
+  const v = vec3(dir.y * u.z - dir.z * u.y, dir.z * u.x - dir.x * u.z, dir.x * u.y - dir.y * u.x);
+  const theta = Math.random() * Math.PI * 2;
+  const r = maxAngle * Math.sqrt(Math.random());
+  const cu = Math.cos(theta) * r;
+  const cv = Math.sin(theta) * r;
+  return normalize(vec3(dir.x + u.x * cu + v.x * cv, dir.y + u.y * cu + v.y * cv, dir.z + u.z * cu + v.z * cv));
+}

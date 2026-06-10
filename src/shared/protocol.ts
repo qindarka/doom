@@ -2,6 +2,9 @@
 // `type` discriminator. Client→server and server→client unions are kept separate
 // so each side can exhaustively switch on what it can actually receive.
 
+import { WEAPONS } from "./constants";
+import type { WeaponId } from "./constants";
+
 export interface PlayerScore {
   id: string;
   name: string;
@@ -18,6 +21,18 @@ export interface PlayerSnapshot {
   pitch: number;
   hp: number;
   dead: boolean;
+  w: WeaponId; // currently held weapon (drives avatar/viewmodel display)
+}
+
+/** A live grenade in flight (server-simulated). */
+export interface NadeSnapshot {
+  id: number;
+  p: [number, number, number];
+}
+
+export interface ItemState {
+  id: number;
+  avail: boolean;
 }
 
 // --- Client → Server ---------------------------------------------------------
@@ -44,6 +59,7 @@ export interface ShootMsg {
   o: [number, number, number]; // claimed eye position (validated server-side)
   d: [number, number, number]; // normalized direction
   e: number; // spawn epoch
+  w: WeaponId; // weapon fired (ownership/ammo/cooldown validated server-side)
 }
 
 export interface PingMsg {
@@ -65,6 +81,7 @@ export interface WelcomeMsg {
   e: number; // initial spawn epoch
   hp: number;
   roster: PlayerScore[];
+  items: ItemState[]; // current weapon-pickup availability
 }
 
 export interface RosterMsg {
@@ -75,17 +92,52 @@ export interface RosterMsg {
 export interface StateMsg {
   type: "state";
   players: PlayerSnapshot[];
+  /** Present only while grenades are in flight. */
+  nades?: NadeSnapshot[];
+}
+
+/** One resolved hitscan ray within a shot (shotguns fire several). */
+export interface ShotRay {
+  d: [number, number, number];
+  /** Distance along d where the ray ended (wall or player), for tracer endpoints. */
+  t: number;
+  hitId?: string; // player that was struck, if any
 }
 
 /** A validated shot, broadcast to everyone (including the shooter) for tracers/audio. */
 export interface ShotMsg {
   type: "shot";
   id: string; // shooter
+  w: WeaponId;
   o: [number, number, number];
-  d: [number, number, number];
-  /** Distance along d where the shot ended (wall or player), for tracer endpoints. */
-  t: number;
-  hitId?: string; // player that was struck, if any
+  rays: ShotRay[];
+}
+
+/** A weapon pickup became available/unavailable (broadcast). */
+export interface ItemMsg {
+  type: "item";
+  id: number;
+  avail: boolean;
+}
+
+/** Sent to the collector only: you now hold this weapon with this much ammo. */
+export interface PickupMsg {
+  type: "pickup";
+  w: WeaponId;
+  ammo: number;
+}
+
+/** Sent to the collector only: a medkit restored you to this hp. */
+export interface HealMsg {
+  type: "heal";
+  hp: number;
+}
+
+/** A grenade detonated (broadcast): explosion effects + splash already applied. */
+export interface BoomMsg {
+  type: "boom";
+  p: [number, number, number];
+  by: string;
 }
 
 export interface HitMsg {
@@ -131,6 +183,10 @@ export type ServerMsg =
   | RosterMsg
   | StateMsg
   | ShotMsg
+  | ItemMsg
+  | PickupMsg
+  | HealMsg
+  | BoomMsg
   | HitMsg
   | DeathMsg
   | SpawnMsg
@@ -169,8 +225,14 @@ export function parseClientMsg(raw: unknown): ClientMsg | null {
         ? ({ type: "input", p: m.p as [number, number, number], yaw: m.yaw as number, pitch: m.pitch as number, e: m.e as number })
         : null;
     case "shoot":
-      return isVec3(m.o) && isVec3(m.d) && isNum(m.e)
-        ? ({ type: "shoot", o: m.o as [number, number, number], d: m.d as [number, number, number], e: m.e as number })
+      return isVec3(m.o) && isVec3(m.d) && isNum(m.e) && typeof m.w === "string" && m.w in WEAPONS
+        ? ({
+            type: "shoot",
+            o: m.o as [number, number, number],
+            d: m.d as [number, number, number],
+            e: m.e as number,
+            w: m.w as WeaponId,
+          })
         : null;
     case "ping":
       return isNum(m.t) ? { type: "ping", t: m.t as number } : null;

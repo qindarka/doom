@@ -1,7 +1,8 @@
 // DOM-based HUD: crisp text, zero WebGL cost. All player-provided strings are
 // set via textContent (never innerHTML), so names can't inject markup.
 
-import { MAX_HEALTH, MAX_PLAYERS, WEAPON_NAME } from "../shared/constants";
+import { DEFAULT_WEAPON, MAX_HEALTH, MAX_PLAYERS, WEAPONS } from "../shared/constants";
+import type { WeaponId } from "../shared/constants";
 import type { PlayerScore } from "../shared/protocol";
 
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -22,8 +23,14 @@ function colorOf(hex: number): string {
 export class Hud {
   private root: HTMLElement;
   private hud: HTMLElement;
+  private healthPanel!: HTMLElement;
   private healthNum: HTMLElement;
   private healthFill: HTMLElement;
+  private healthStatus!: HTMLElement;
+  private lowhp!: HTMLElement;
+  private weaponName!: HTMLElement;
+  private weaponAmmo!: HTMLElement;
+  private toastTimer = 0;
   private playersEl: HTMLElement;
   private pingEl: HTMLElement;
   private killfeed: HTMLElement;
@@ -46,18 +53,22 @@ export class Hud {
 
     el("div", "crosshair", this.hud);
     this.hitmarker = el("div", "hitmarker", this.hud);
+    this.lowhp = el("div", "lowhp", this.hud);
     this.vignette = el("div", "vignette", this.hud);
 
-    const healthPanel = el("div", "health-panel", this.hud);
-    el("div", "health-label", healthPanel).textContent = "INTEGRITY";
-    const healthRow = el("div", "health-row", healthPanel);
+    this.healthPanel = el("div", "health-panel", this.hud);
+    const labelRow = el("div", "health-label", this.healthPanel);
+    labelRow.textContent = "INTEGRITY";
+    this.healthStatus = el("span", "health-status", labelRow);
+    const healthRow = el("div", "health-row", this.healthPanel);
     this.healthNum = el("div", "health-num", healthRow);
     const bar = el("div", "health-bar", healthRow);
     this.healthFill = el("div", "", bar);
 
     const weaponPanel = el("div", "weapon-panel", this.hud);
-    el("div", "weapon-name", weaponPanel).textContent = WEAPON_NAME.toUpperCase();
-    el("div", "weapon-ammo", weaponPanel).textContent = "HITSCAN · ∞";
+    this.weaponName = el("div", "weapon-name", weaponPanel);
+    this.weaponAmmo = el("div", "weapon-ammo", weaponPanel);
+    this.setWeapon(DEFAULT_WEAPON, null);
 
     const topbar = el("div", "topbar", this.hud);
     this.playersEl = el("span", "", topbar);
@@ -90,7 +101,7 @@ export class Hud {
     this.pauseHint.textContent = "CLICK TO RESUME";
 
     el("div", "bottom-hint", this.hud).textContent =
-      "WASD MOVE · SPACE JUMP · CLICK SHOOT · TAB SCORES";
+      "WASD MOVE · SPACE JUMP · CLICK SHOOT · 1-4 WEAPONS · CTRL CYCLE · TAB SCORES · M MUSIC";
 
     this.setHealth(MAX_HEALTH);
     this.setPlayers(1);
@@ -110,6 +121,17 @@ export class Hud {
     this.healthNum.textContent = String(clamped);
     this.healthNum.classList.toggle("low", clamped <= 30);
     this.healthFill.style.width = `${(clamped / MAX_HEALTH) * 100}%`;
+
+    // Tiered readout: color, status word, and a closing-in red vignette that
+    // makes "how close to death am I" legible without looking at the numbers.
+    const tier = clamped > 60 ? "ok" : clamped > 30 ? "warn" : "crit";
+    this.healthPanel.classList.toggle("warn", tier === "warn");
+    this.healthPanel.classList.toggle("crit", tier === "crit");
+    this.healthStatus.textContent =
+      tier === "ok" ? "OPTIMAL" : tier === "warn" ? "DAMAGED" : "CRITICAL";
+    const danger = Math.max(0, (60 - clamped) / 60);
+    this.lowhp.style.opacity = String(danger * 0.75);
+    this.lowhp.classList.toggle("pulse", tier === "crit" && clamped > 0);
   }
 
   setPlayers(n: number): void {
@@ -203,9 +225,22 @@ export class Hud {
     this.deathScreen.classList.remove("show");
   }
 
+  setWeapon(w: WeaponId, ammo: number | null): void {
+    this.weaponName.textContent = WEAPONS[w].name.toUpperCase();
+    this.weaponAmmo.textContent = ammo === null ? "HITSCAN · ∞" : `AMMO · ${ammo}`;
+    this.weaponAmmo.style.color = ammo !== null && ammo <= 2 ? "#ff5533" : "";
+  }
+
   showToast(text: string): void {
+    window.clearTimeout(this.toastTimer);
     this.toast.textContent = text;
     this.toast.classList.add("show");
+  }
+
+  /** A toast that hides itself (pickups, music toggle). */
+  flashToast(text: string, ms = 1800): void {
+    this.showToast(text);
+    this.toastTimer = window.setTimeout(() => this.hideToast(), ms);
   }
 
   hideToast(): void {

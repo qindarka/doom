@@ -1,8 +1,11 @@
 // The authoritative game server: one Durable Object instance holds the entire
-// room — roster, positions, health, and combat resolution. Clients stream
-// position/rotation at ~20Hz and *claim* shots; the server re-runs every shot
-// as a raycast against its own view of the world, so client hit claims are
-// never trusted.
+// room — roster, positions, health, weapons, pickups, and combat resolution.
+// Clients stream position/rotation at ~20Hz and *claim* shots; the server
+// re-runs every shot as raycasts against its own view of the world, so client
+// hit claims are never trusted.
+//
+// Rooms named "solo-*" are practice arenas: the server spawns AI bots that
+// roam the waypoint graph, pick up weapons, and fight back.
 //
 // WebSockets use the Hibernation API (ctx.acceptWebSocket + webSocketMessage
 // handlers). While players are connected a 20Hz tick interval keeps the object
@@ -14,32 +17,46 @@ import { DurableObject } from "cloudflare:workers";
 import type { Env } from "./index";
 
 import {
+  DEFAULT_WEAPON,
   EYE_HEIGHT,
   GRAVITY,
+  HEALTH_PACK_HP,
   IDLE_TIMEOUT_MS,
+  ITEM_RESPAWN_MS,
   JUMP_VELOCITY,
   MAX_HEALTH,
   MAX_PLAYERS,
   MOVE_SPEED,
   MOVE_WINDOW_DIST,
   MOVE_WINDOW_MS,
+  PICKUP_DY,
+  PICKUP_RADIUS,
   PLAYER_COLORS,
+  PLAYER_RADIUS,
   PROTOCOL_VERSION,
   RECONNECT_GRACE_MS,
   RESPAWN_DELAY_MS,
   SHOT_ORIGIN_DY,
   SHOT_ORIGIN_TOLERANCE,
+  SOLO_BOT_COUNT,
+  SOLO_ROOM_PREFIX,
   SPEED_SLACK,
   SPEED_TOLERANCE,
   TICK_MS,
-  WEAPON_COOLDOWN_MS,
-  WEAPON_DAMAGE,
-  WEAPON_RANGE,
+  WEAPONS,
 } from "../shared/constants";
-import { ARENA_HALF, SOLIDS, SPAWN_POINTS } from "../shared/map";
+import type { WeaponId } from "../shared/constants";
+import { ARENA_HALF, ITEM_SPAWNS, SOLIDS, SPAWN_POINTS, WAYPOINTS } from "../shared/map";
 import type { SpawnPoint, Vec3 } from "../shared/map";
-import { PLAYER_RADIUS } from "../shared/constants";
-import { aabbIntersects, distSq, normalize, playerAABB, rayAABB, rayAABBs, vec3 } from "../shared/math";
+import {
+  distSq,
+  normalize,
+  perturbDir,
+  playerAABB,
+  rayAABB,
+  rayAABBs,
+  vec3,
+} from "../shared/math";
 import {
   CLOSE_FULL,
   CLOSE_IDLE,
@@ -48,19 +65,38 @@ import {
   CLOSE_REPLACED,
   parseClientMsg,
   type InputMsg,
+  type ItemState,
   type JoinMsg,
   type PlayerScore,
   type PlayerSnapshot,
   type ServerMsg,
   type ShootMsg,
+  type ShotRay,
+  type StateMsg,
 } from "../shared/protocol";
+import {
+  BOT_ENGAGE_RANGE,
+  BOT_NAMES,
+  BOT_REACTION_MS,
+  BOT_SCAN_MS,
+  BOT_SPEED,
+  clampToArena,
+  embedded,
+  findPath,
+  nearestNode,
+  newBrain,
+  stepGround,
+  type BotBrain,
+} from "./bots";
 
 interface Player {
   id: string;
   token: string;
   name: string;
   color: number;
-  ws: WebSocket;
+  /** null for bots. */
+  ws: WebSocket | null;
+  bot: BotBrain | null;
   pos: Vec3;
   yaw: number;
   pitch: number;
@@ -68,11 +104,16 @@ interface Player {
   dead: boolean;
   kills: number;
   deaths: number;
+  weapon: WeaponId;
+  /** Remaining ammo per picked-up weapon (the default weapon is infinite). */
+  ammo: Partial<Record<WeaponId, number>>;
   /** Incremented on every (re)spawn; inputs carrying a stale epoch are dropped. */
   epoch: number;
   respawnAt: number | null;
   lastInputAt: number;
   lastSeen: number;
+  /** Earliest time the next shot is accepted (per current weapon's cooldown). */
+  nextShotAt: number;
   /** Cumulative altitude gained since last touching a surface (anti-fly). */
   airRise: number;
   /** Milliseconds spent airborne without descending (anti-hover). */
@@ -80,9 +121,6 @@ interface Player {
   /** Sliding-window cumulative horizontal movement (anti-speedhack). */
   windowDist: number;
   windowStart: number;
-  /** Token bucket for fire rate (1 token per WEAPON_COOLDOWN_MS, small burst). */
-  shotTokens: number;
-  shotRefillAt: number;
   /** Simple flood guard. */
   msgCount: number;
   msgWindowAt: number;
@@ -90,7 +128,7 @@ interface Player {
 
 // Combat state is preserved across a reconnect so closing the socket is never
 // an escape hatch: no combat-log healing, no respawn-delay skipping, no
-// teleport-to-a-fresh-spawn while being chased.
+// teleport-to-a-fresh-spawn while being chased. (Weapon pickups are dropped.)
 interface GraceEntry {
   kills: number;
   deaths: number;
@@ -103,24 +141,45 @@ interface GraceEntry {
   expiresAt: number;
 }
 
-const SHOT_BURST = 1.5;
+interface ItemSlot {
+  avail: boolean;
+  respawnAt: number;
+}
+
+interface Nade {
+  id: number;
+  by: string;
+  pos: Vec3;
+  vel: Vec3;
+  explodeAt: number;
+}
+
+const NADE_RADIUS = 0.12;
+const NADE_BOUNCE = 0.45;
+const NADE_FRICTION = 0.75;
+const NADE_UP_BIAS = 3.0; // m/s added to the throw's vertical velocity
+
 const MAX_MSGS_PER_SEC = 120;
 const JOIN_TIMEOUT_MS = 10_000;
 const MAX_PENDING = 16;
 const MAX_Y = 12;
-/** Player AABB shrink when testing for "embedded in geometry" (float tolerance). */
-const EMBED_EPSILON = 0.05;
 /** Max altitude gain without touching a surface: jump apex plus slack. */
 const MAX_AIR_RISE = (JUMP_VELOCITY * JUMP_VELOCITY) / (2 * GRAVITY) + 0.35;
 /** Max ms airborne without descending (a real jump apex dwell is well under this). */
 const MAX_HOVER_MS = 700;
+/** Cooldown jitter allowance: sustained fire rate is capped at ~1.06x nominal. */
+const COOLDOWN_TOLERANCE = 0.94;
 
 export class GameRoom extends DurableObject<Env> {
   private players = new Map<string, Player>();
   private bySocket = new Map<WebSocket, Player>();
   private pending = new Map<WebSocket, number>(); // socket -> connect time, awaiting join
-  private grace = new Map<string, GraceEntry>(); // token -> preserved score
+  private grace = new Map<string, GraceEntry>(); // token -> preserved score/state
+  private items: ItemSlot[] = ITEM_SPAWNS.map(() => ({ avail: true, respawnAt: 0 }));
+  private nades: Nade[] = [];
+  private nadeSeq = 1;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private botsSpawned = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -139,7 +198,8 @@ export class GameRoom extends DurableObject<Env> {
     const url = new URL(request.url);
 
     if (url.pathname === "/api/status") {
-      return Response.json({ players: this.players.size, max: MAX_PLAYERS });
+      const humans = [...this.players.values()].filter((p) => p.ws !== null).length;
+      return Response.json({ players: humans, max: MAX_PLAYERS });
     }
 
     if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -155,6 +215,8 @@ export class GameRoom extends DurableObject<Env> {
     if (this.players.size >= MAX_PLAYERS && this.pending.size >= 2) {
       return this.rejectFull();
     }
+
+    this.ensureBots();
 
     const pair = new WebSocketPair();
     const client = pair[0];
@@ -238,7 +300,7 @@ export class GameRoom extends DurableObject<Env> {
     // old socket has not errored out yet): adopt that player, swap the socket.
     if (msg.token) {
       const existing = [...this.players.values()].find((p) => p.token === msg.token);
-      if (existing) {
+      if (existing && existing.ws !== null) {
         this.bySocket.delete(existing.ws);
         try {
           existing.ws.close(CLOSE_REPLACED, "replaced by reconnect");
@@ -249,6 +311,10 @@ export class GameRoom extends DurableObject<Env> {
         existing.name = name;
         existing.lastSeen = now;
         existing.lastInputAt = now;
+        // Pickups are dropped on any reconnect (the client resets its inventory
+        // on welcome; the grace path does the same — the flows must agree).
+        existing.weapon = DEFAULT_WEAPON;
+        existing.ammo = {};
         this.bySocket.set(ws, existing);
         this.send(ws, {
           type: "welcome",
@@ -258,8 +324,9 @@ export class GameRoom extends DurableObject<Env> {
           spawn: [existing.pos.x, existing.pos.y, existing.pos.z],
           yaw: existing.yaw,
           e: existing.epoch,
-          hp: existing.hp,
+          hp: existing.dead ? 0 : existing.hp,
           roster: this.roster(),
+          items: this.itemStates(),
         });
         this.broadcastRoster();
         return;
@@ -278,8 +345,7 @@ export class GameRoom extends DurableObject<Env> {
     const restored = graceEntry && graceEntry.expiresAt > now ? graceEntry : undefined;
     if (msg.token && restored) this.grace.delete(msg.token);
 
-    let id = crypto.randomUUID().slice(0, 8);
-    while (this.players.has(id)) id = crypto.randomUUID().slice(0, 8);
+    const id = this.newId();
     const token = msg.token && restored ? msg.token : crypto.randomUUID();
     const spawn = this.pickSpawn();
 
@@ -289,23 +355,27 @@ export class GameRoom extends DurableObject<Env> {
       name,
       color: restored?.color ?? this.pickColor(),
       ws,
-      pos: restored ? vec3(restored.pos.x, restored.pos.y, restored.pos.z) : vec3(spawn.pos.x, spawn.pos.y, spawn.pos.z),
+      bot: null,
+      pos: restored
+        ? vec3(restored.pos.x, restored.pos.y, restored.pos.z)
+        : vec3(spawn.pos.x, spawn.pos.y, spawn.pos.z),
       yaw: restored?.yaw ?? spawn.yaw,
       pitch: 0,
       hp: restored?.hp ?? MAX_HEALTH,
       dead: restored?.dead ?? false,
       kills: restored?.kills ?? 0,
       deaths: restored?.deaths ?? 0,
+      weapon: DEFAULT_WEAPON,
+      ammo: {},
       epoch: 1,
       respawnAt: restored?.dead ? (restored.respawnAt ?? now + RESPAWN_DELAY_MS) : null,
       lastInputAt: now,
       lastSeen: now,
+      nextShotAt: 0,
       airRise: 0,
       hoverMs: 0,
       windowDist: 0,
       windowStart: now,
-      shotTokens: SHOT_BURST,
-      shotRefillAt: now,
       msgCount: 0,
       msgWindowAt: now,
     };
@@ -323,6 +393,7 @@ export class GameRoom extends DurableObject<Env> {
       e: player.epoch,
       hp: player.dead ? 0 : player.hp,
       roster: this.roster(),
+      items: this.itemStates(),
     });
     this.broadcastRoster();
   }
@@ -390,16 +461,23 @@ export class GameRoom extends DurableObject<Env> {
     }
     if (player.windowDist + horizDist > MOVE_WINDOW_DIST) return;
 
-    // Reject positions embedded in geometry (no hiding inside walls).
-    const box = playerAABB(next);
-    box.min.x += EMBED_EPSILON;
-    box.min.y += EMBED_EPSILON;
-    box.min.z += EMBED_EPSILON;
-    box.max.x -= EMBED_EPSILON;
-    box.max.y -= EMBED_EPSILON;
-    box.max.z -= EMBED_EPSILON;
-    for (const solid of SOLIDS) {
-      if (aabbIntersects(box, solid)) return;
+    // Reject positions embedded in geometry (no hiding inside walls), and
+    // sweep the whole segment: a low input rate inflates dt (and therefore the
+    // per-message allowance) enough to hop THROUGH thin cover if only the
+    // endpoint were tested.
+    if (embedded(next.x, next.y, next.z)) return;
+    const sweepSteps = Math.ceil(horizDist / 0.3);
+    for (let s = 1; s < sweepSteps; s++) {
+      const f = s / sweepSteps;
+      if (
+        embedded(
+          player.pos.x + dx * f,
+          player.pos.y + (next.y - player.pos.y) * f,
+          player.pos.z + dz * f,
+        )
+      ) {
+        return;
+      }
     }
 
     // Vertical plausibility: altitude gain since last ground contact is capped
@@ -425,6 +503,7 @@ export class GameRoom extends DurableObject<Env> {
 
     player.windowDist += horizDist;
     player.pos = next;
+    this.checkPickups(player, now);
   }
 
   /** Highest surface (floor or solid top) at-or-below the player's feet. */
@@ -451,16 +530,12 @@ export class GameRoom extends DurableObject<Env> {
   private handleShoot(player: Player, msg: ShootMsg): void {
     if (player.dead || msg.e !== player.epoch) return;
 
-    // Fire-rate token bucket: sustained rate is capped at exactly one shot per
-    // cooldown; a burst allowance of 0.5 absorbs network jitter.
     const now = Date.now();
-    player.shotTokens = Math.min(
-      SHOT_BURST,
-      player.shotTokens + (now - player.shotRefillAt) / WEAPON_COOLDOWN_MS,
-    );
-    player.shotRefillAt = now;
-    if (player.shotTokens < 1) return;
-    player.shotTokens -= 1;
+    const def = WEAPONS[msg.w];
+
+    // Ownership/ammo: the default weapon is always available, pickups need ammo.
+    if (def.ammo !== null && (player.ammo[msg.w] ?? 0) <= 0) return;
+    if (now < player.nextShotAt) return;
 
     // The claimed muzzle position must agree with where the server thinks the
     // shooter's eye is (small tolerance for in-flight movement), and must be
@@ -477,49 +552,425 @@ export class GameRoom extends DurableObject<Env> {
       if (blocked !== null && blocked < offsetLen - 0.01) return;
     }
 
-    const dir = normalize(vec3(msg.d[0], msg.d[1], msg.d[2]));
-
-    // Authoritative raycast: nearest of (world geometry, floor, other players).
-    let endT = rayAABBs(origin, dir, SOLIDS, WEAPON_RANGE) ?? WEAPON_RANGE;
-    if (dir.y < -1e-6) {
-      const tFloor = -origin.y / dir.y;
-      if (tFloor > 0 && tFloor < endT) endT = tFloor;
+    player.nextShotAt = now + def.cooldownMs * COOLDOWN_TOLERANCE;
+    if (def.ammo !== null) {
+      player.ammo[msg.w] = (player.ammo[msg.w] ?? 1) - 1;
     }
+    player.weapon = msg.w;
 
-    let victim: Player | null = null;
-    let victimT = endT;
-    for (const other of this.players.values()) {
-      if (other.id === player.id || other.dead) continue;
-      const t = rayAABB(origin, dir, playerAABB(other.pos), WEAPON_RANGE);
-      if (t !== null && t < victimT) {
-        victimT = t;
-        victim = other;
+    const dir = normalize(vec3(msg.d[0], msg.d[1], msg.d[2]));
+    if (def.projectile) {
+      this.spawnGrenade(player, origin, dir, now);
+    } else {
+      this.resolveShot(player, origin, dir, msg.w, now);
+    }
+  }
+
+  // --- Grenades --------------------------------------------------------------------
+
+  private spawnGrenade(shooter: Player, origin: Vec3, dir: Vec3, now: number): void {
+    const proj = WEAPONS.frag.projectile;
+    if (!proj) return;
+    this.nades.push({
+      id: this.nadeSeq++,
+      by: shooter.id,
+      pos: vec3(origin.x, origin.y, origin.z),
+      vel: vec3(dir.x * proj.speed, dir.y * proj.speed + NADE_UP_BIAS, dir.z * proj.speed),
+      explodeAt: now + proj.fuseMs,
+    });
+  }
+
+  private simulateNades(now: number): void {
+    if (this.nades.length === 0) return;
+    const SUBSTEPS = 2;
+    const dt = TICK_MS / 1000 / SUBSTEPS;
+    const lim = ARENA_HALF - NADE_RADIUS;
+
+    for (let i = this.nades.length - 1; i >= 0; i--) {
+      const nade = this.nades[i];
+      if (now >= nade.explodeAt) {
+        this.nades.splice(i, 1);
+        this.explode(nade, now);
+        continue;
       }
+      for (let s = 0; s < SUBSTEPS; s++) {
+        nade.vel.y -= GRAVITY * dt;
+        nade.pos.x += nade.vel.x * dt;
+        nade.pos.y += nade.vel.y * dt;
+        nade.pos.z += nade.vel.z * dt;
+
+        // Floor and outer walls.
+        if (nade.pos.y < NADE_RADIUS) {
+          nade.pos.y = NADE_RADIUS;
+          nade.vel.y = Math.abs(nade.vel.y) > 1.2 ? -nade.vel.y * NADE_BOUNCE : 0;
+          nade.vel.x *= NADE_FRICTION;
+          nade.vel.z *= NADE_FRICTION;
+        }
+        if (Math.abs(nade.pos.x) > lim) {
+          nade.pos.x = Math.sign(nade.pos.x) * lim;
+          nade.vel.x = -nade.vel.x * NADE_BOUNCE;
+        }
+        if (Math.abs(nade.pos.z) > lim) {
+          nade.pos.z = Math.sign(nade.pos.z) * lim;
+          nade.vel.z = -nade.vel.z * NADE_BOUNCE;
+        }
+
+        // Solid AABBs (expanded by the grenade radius): push out along the
+        // shallowest axis and reflect that velocity component.
+        for (const solid of SOLIDS) {
+          const minX = solid.min.x - NADE_RADIUS;
+          const maxX = solid.max.x + NADE_RADIUS;
+          const minY = solid.min.y - NADE_RADIUS;
+          const maxY = solid.max.y + NADE_RADIUS;
+          const minZ = solid.min.z - NADE_RADIUS;
+          const maxZ = solid.max.z + NADE_RADIUS;
+          const p = nade.pos;
+          if (p.x <= minX || p.x >= maxX || p.y <= minY || p.y >= maxY || p.z <= minZ || p.z >= maxZ) {
+            continue;
+          }
+          const pushXNeg = p.x - minX;
+          const pushXPos = maxX - p.x;
+          const pushYNeg = p.y - minY;
+          const pushYPos = maxY - p.y;
+          const pushZNeg = p.z - minZ;
+          const pushZPos = maxZ - p.z;
+          const minPush = Math.min(pushXNeg, pushXPos, pushYNeg, pushYPos, pushZNeg, pushZPos);
+          if (minPush === pushXNeg || minPush === pushXPos) {
+            p.x = minPush === pushXNeg ? minX : maxX;
+            nade.vel.x = -nade.vel.x * NADE_BOUNCE;
+          } else if (minPush === pushYNeg || minPush === pushYPos) {
+            p.y = minPush === pushYNeg ? minY : maxY;
+            nade.vel.y = minPush === pushYPos && Math.abs(nade.vel.y) <= 1.2 ? 0 : -nade.vel.y * NADE_BOUNCE;
+            nade.vel.x *= NADE_FRICTION;
+            nade.vel.z *= NADE_FRICTION;
+          } else {
+            p.z = minPush === pushZNeg ? minZ : maxZ;
+            nade.vel.z = -nade.vel.z * NADE_BOUNCE;
+          }
+        }
+      }
+    }
+  }
+
+  private explode(nade: Nade, now: number): void {
+    this.broadcast({ type: "boom", p: [round2(nade.pos.x), round2(nade.pos.y), round2(nade.pos.z)], by: nade.by });
+    const def = WEAPONS.frag;
+    const radius = def.projectile?.radius ?? 6;
+    const shooter = this.players.get(nade.by) ?? null;
+
+    let killed = false;
+    for (const victim of [...this.players.values()]) {
+      if (victim.dead) continue;
+      const chest = vec3(victim.pos.x, victim.pos.y + 0.9, victim.pos.z);
+      const d = Math.sqrt(distSq(nade.pos, chest));
+      if (d > radius) continue;
+      // Walls shield the blast.
+      if (d > 0.01) {
+        const dir = normalize(vec3(chest.x - nade.pos.x, chest.y - nade.pos.y, chest.z - nade.pos.z));
+        if (rayAABBs(nade.pos, dir, SOLIDS, d - 0.05) !== null) continue;
+      }
+      const dmg = Math.round(def.damage * (1 - d / radius));
+      if (dmg <= 0) continue;
+      if (this.applyDamage(victim, shooter, dmg, nade.by, now)) killed = true;
+    }
+    if (killed) this.broadcastRoster();
+  }
+
+  /** Authoritative hitscan: raycast every pellet, apply damage, handle kills. */
+  private resolveShot(shooter: Player, origin: Vec3, dir: Vec3, w: WeaponId, now: number): void {
+    const def = WEAPONS[w];
+    const rays: ShotRay[] = [];
+    const damage = new Map<Player, number>();
+
+    for (let i = 0; i < def.pellets; i++) {
+      const d = def.pellets > 1 ? perturbDir(dir, def.spread) : dir;
+
+      let endT = rayAABBs(origin, d, SOLIDS, def.range) ?? def.range;
+      if (d.y < -1e-6) {
+        const tFloor = -origin.y / d.y;
+        if (tFloor > 0 && tFloor < endT) endT = tFloor;
+      }
+
+      let victim: Player | null = null;
+      let victimT = endT;
+      for (const other of this.players.values()) {
+        if (other.id === shooter.id || other.dead) continue;
+        const t = rayAABB(origin, d, playerAABB(other.pos), def.range);
+        if (t !== null && t < victimT) {
+          victimT = t;
+          victim = other;
+        }
+      }
+
+      rays.push({
+        d: [round3(d.x), round3(d.y), round3(d.z)],
+        t: round2(victim ? victimT : endT),
+        hitId: victim?.id,
+      });
+      if (victim) damage.set(victim, (damage.get(victim) ?? 0) + def.damage);
     }
 
     this.broadcast({
       type: "shot",
-      id: player.id,
-      o: [origin.x, origin.y, origin.z],
-      d: [dir.x, dir.y, dir.z],
-      t: victim ? victimT : endT,
-      hitId: victim?.id,
+      id: shooter.id,
+      w,
+      o: [round2(origin.x), round2(origin.y), round2(origin.z)],
+      rays,
     });
 
-    if (!victim) return;
-
-    victim.hp -= WEAPON_DAMAGE;
-    this.broadcast({ type: "hit", id: victim.id, by: player.id, dmg: WEAPON_DAMAGE, hp: Math.max(0, victim.hp) });
-
-    if (victim.hp <= 0) {
-      victim.hp = 0;
-      victim.dead = true;
-      victim.deaths += 1;
-      victim.respawnAt = now + RESPAWN_DELAY_MS;
-      player.kills += 1;
-      this.broadcast({ type: "death", id: victim.id, by: player.id });
-      this.broadcastRoster();
+    let killed = false;
+    for (const [victim, dmg] of damage) {
+      if (this.applyDamage(victim, shooter, dmg, shooter.id, now)) killed = true;
     }
+    if (killed) this.broadcastRoster();
+  }
+
+  /** Damage + death/credit bookkeeping. Returns true if the victim died. */
+  private applyDamage(
+    victim: Player,
+    shooter: Player | null,
+    dmg: number,
+    byId: string,
+    now: number,
+  ): boolean {
+    victim.hp -= dmg;
+    this.broadcast({ type: "hit", id: victim.id, by: byId, dmg, hp: Math.max(0, victim.hp) });
+    if (victim.hp > 0 || victim.dead) return false;
+    victim.hp = 0;
+    victim.dead = true;
+    victim.deaths += 1;
+    victim.respawnAt = now + RESPAWN_DELAY_MS;
+    victim.weapon = DEFAULT_WEAPON;
+    victim.ammo = {};
+    // Self-frags count as a death but never as a kill.
+    if (shooter && shooter.id !== victim.id) shooter.kills += 1;
+    this.broadcast({ type: "death", id: victim.id, by: byId });
+    return true;
+  }
+
+  // --- Weapon pickups ----------------------------------------------------------------
+
+  private itemStates(): ItemState[] {
+    return this.items.map((slot, i) => ({ id: ITEM_SPAWNS[i].id, avail: slot.avail }));
+  }
+
+  private checkPickups(player: Player, now: number): void {
+    if (player.dead) return;
+    for (let i = 0; i < this.items.length; i++) {
+      const slot = this.items[i];
+      if (!slot.avail) continue;
+      const spawn = ITEM_SPAWNS[i];
+      const dxz = Math.hypot(player.pos.x - spawn.pos.x, player.pos.z - spawn.pos.z);
+      const dy = Math.abs(spawn.pos.y - (player.pos.y + 0.9));
+      if (dxz > PICKUP_RADIUS || dy > PICKUP_DY) continue;
+
+      if (spawn.kind === "health") {
+        // Medkits are only consumed when actually hurt.
+        if (player.hp >= MAX_HEALTH) continue;
+        slot.avail = false;
+        slot.respawnAt = now + ITEM_RESPAWN_MS;
+        player.hp = Math.min(MAX_HEALTH, player.hp + HEALTH_PACK_HP);
+        this.broadcast({ type: "item", id: spawn.id, avail: false });
+        this.send(player.ws, { type: "heal", hp: player.hp });
+        continue;
+      }
+
+      const weapon = spawn.weapon ?? DEFAULT_WEAPON;
+      slot.avail = false;
+      slot.respawnAt = now + ITEM_RESPAWN_MS;
+      const def = WEAPONS[weapon];
+      player.ammo[weapon] = def.ammo ?? 0;
+      player.weapon = weapon;
+      this.broadcast({ type: "item", id: spawn.id, avail: false });
+      this.send(player.ws, { type: "pickup", w: weapon, ammo: def.ammo ?? 0 });
+    }
+  }
+
+  // --- Practice bots --------------------------------------------------------------------
+
+  private ensureBots(): void {
+    if (this.botsSpawned || !this.ctx.id.name?.startsWith(SOLO_ROOM_PREFIX)) return;
+    this.botsSpawned = true;
+    const now = Date.now();
+    for (let i = 0; i < SOLO_BOT_COUNT; i++) {
+      const id = this.newId();
+      const spawn = this.pickSpawn();
+      const bot: Player = {
+        id,
+        token: `bot-${id}`,
+        name: BOT_NAMES[i % BOT_NAMES.length],
+        color: this.pickColor(),
+        ws: null,
+        bot: newBrain(),
+        pos: vec3(spawn.pos.x, spawn.pos.y, spawn.pos.z),
+        yaw: spawn.yaw,
+        pitch: 0,
+        hp: MAX_HEALTH,
+        dead: false,
+        kills: 0,
+        deaths: 0,
+        weapon: DEFAULT_WEAPON,
+        ammo: {},
+        epoch: 1,
+        respawnAt: null,
+        lastInputAt: now,
+        lastSeen: now,
+        nextShotAt: now + 1500,
+        airRise: 0,
+        hoverMs: 0,
+        windowDist: 0,
+        windowStart: now,
+        msgCount: 0,
+        msgWindowAt: now,
+      };
+      this.players.set(id, bot);
+    }
+  }
+
+  private updateBots(now: number): void {
+    const dt = TICK_MS / 1000;
+    for (const bot of this.players.values()) {
+      const brain = bot.bot;
+      if (!brain || bot.dead) continue;
+
+      // Target acquisition on a slow scan cadence.
+      if (now >= brain.scanAt) {
+        brain.scanAt = now + BOT_SCAN_MS;
+        const prev = brain.targetId;
+        brain.targetId = this.scanTarget(bot);
+        if (brain.targetId && brain.targetId !== prev) {
+          brain.reactAt = now + BOT_REACTION_MS + Math.random() * 250;
+        }
+      }
+
+      const target = brain.targetId ? this.players.get(brain.targetId) : undefined;
+      const engaged = target && !target.dead && this.canSee(bot, target) ? target : undefined;
+
+      // Movement: strafe around a visible target, otherwise roam the waypoints.
+      let mx = 0;
+      let mz = 0;
+      if (engaged) {
+        const tx = engaged.pos.x - bot.pos.x;
+        const tz = engaged.pos.z - bot.pos.z;
+        const dist = Math.hypot(tx, tz) || 1;
+        const fx = tx / dist;
+        const fz = tz / dist;
+        if (now >= brain.strafeUntil) {
+          brain.strafeDir = Math.random() < 0.5 ? -1 : 1;
+          brain.strafeUntil = now + 700 + Math.random() * 900;
+        }
+        const ideal = WEAPONS[bot.weapon].pellets > 1 ? 8 : 16;
+        const closeIn = dist > ideal ? 0.7 : dist < ideal * 0.5 ? -0.6 : 0;
+        mx = fz * brain.strafeDir + fx * closeIn;
+        mz = -fx * brain.strafeDir + fz * closeIn;
+        bot.yaw = Math.atan2(-fx, -fz);
+        const dyAim = engaged.pos.y + 0.9 - (bot.pos.y + EYE_HEIGHT);
+        bot.pitch = clampPitch(Math.atan2(dyAim, dist));
+      } else {
+        if (brain.path.length === 0 || brain.pathIdx >= brain.path.length || now >= brain.repathAt) {
+          const goal =
+            target && !target.dead
+              ? nearestNode(target.pos)
+              : Math.floor(Math.random() * WAYPOINTS.length);
+          brain.path = findPath(nearestNode(bot.pos), goal);
+          brain.pathIdx = 0;
+          brain.repathAt = now + 9000;
+        }
+        if (brain.pathIdx < brain.path.length) {
+          const node = WAYPOINTS[brain.path[brain.pathIdx]];
+          const dx = node.x - bot.pos.x;
+          const dz = node.z - bot.pos.z;
+          const d = Math.hypot(dx, dz);
+          if (d < 0.9) {
+            brain.pathIdx += 1;
+          } else {
+            mx = dx / d;
+            mz = dz / d;
+            bot.yaw = Math.atan2(-mx, -mz);
+            bot.pitch = 0;
+          }
+        }
+      }
+
+      const mlen = Math.hypot(mx, mz);
+      if (mlen > 0.01) {
+        const step = (BOT_SPEED * dt) / mlen;
+        this.tryMoveBot(bot, brain, bot.pos.x + mx * step, bot.pos.z + mz * step);
+      }
+      this.checkPickups(bot, now);
+
+      // Shooting: human-ish reaction delay, aim error grows with distance.
+      if (engaged && now >= brain.reactAt && now >= bot.nextShotAt) {
+        if (WEAPONS[bot.weapon].ammo !== null && (bot.ammo[bot.weapon] ?? 0) <= 0) {
+          bot.weapon = DEFAULT_WEAPON;
+        }
+        const eyePos = vec3(bot.pos.x, bot.pos.y + EYE_HEIGHT, bot.pos.z);
+        const chest = vec3(engaged.pos.x, engaged.pos.y + 0.9, engaged.pos.z);
+        const dist = Math.sqrt(distSq(eyePos, chest));
+        // Grenades are for mid-range lobs only — never frag yourself point-blank.
+        if (WEAPONS[bot.weapon].projectile && (dist < 9 || dist > 24)) {
+          bot.weapon = DEFAULT_WEAPON;
+        }
+        const def = WEAPONS[bot.weapon];
+        const aim = perturbDir(
+          normalize(vec3(chest.x - eyePos.x, chest.y - eyePos.y, chest.z - eyePos.z)),
+          0.02 + dist * 0.0011,
+        );
+        if (def.ammo !== null) bot.ammo[bot.weapon] = (bot.ammo[bot.weapon] ?? 1) - 1;
+        bot.nextShotAt = now + def.cooldownMs * (1.35 + Math.random() * 0.5);
+        if (def.projectile) {
+          this.spawnGrenade(bot, eyePos, aim, now);
+        } else {
+          this.resolveShot(bot, eyePos, aim, bot.weapon, now);
+        }
+      }
+    }
+  }
+
+  private tryMoveBot(bot: Player, brain: BotBrain, nx: number, nz: number): void {
+    const next = vec3(nx, bot.pos.y, nz);
+    clampToArena(next, ARENA_HALF);
+    const ny = stepGround(next.x, next.z, bot.pos.y);
+    if (!embedded(next.x, ny, next.z)) {
+      bot.pos = vec3(next.x, ny, next.z);
+      return;
+    }
+    const nyX = stepGround(next.x, bot.pos.z, bot.pos.y);
+    if (!embedded(next.x, nyX, bot.pos.z)) {
+      bot.pos = vec3(next.x, nyX, bot.pos.z);
+      return;
+    }
+    const nyZ = stepGround(bot.pos.x, next.z, bot.pos.y);
+    if (!embedded(bot.pos.x, nyZ, next.z)) {
+      bot.pos = vec3(bot.pos.x, nyZ, next.z);
+      return;
+    }
+    // Fully stuck: force a strafe flip and a fresh path next tick.
+    brain.strafeUntil = 0;
+    brain.repathAt = 0;
+  }
+
+  private scanTarget(bot: Player): string | null {
+    let best: Player | null = null;
+    let bestD = BOT_ENGAGE_RANGE * BOT_ENGAGE_RANGE;
+    for (const other of this.players.values()) {
+      if (other.id === bot.id || other.dead) continue;
+      const d = distSq(bot.pos, other.pos);
+      if (d < bestD && this.canSee(bot, other)) {
+        bestD = d;
+        best = other;
+      }
+    }
+    return best?.id ?? null;
+  }
+
+  private canSee(a: Player, b: Player): boolean {
+    const eye = vec3(a.pos.x, a.pos.y + EYE_HEIGHT, a.pos.z);
+    const chest = vec3(b.pos.x, b.pos.y + 0.9, b.pos.z);
+    const dist = Math.sqrt(distSq(eye, chest));
+    if (dist < 0.01) return true;
+    const dir = normalize(vec3(chest.x - eye.x, chest.y - eye.y, chest.z - eye.z));
+    return rayAABBs(eye, dir, SOLIDS, dist - 0.05) === null;
   }
 
   // --- Tick loop ---------------------------------------------------------------------
@@ -531,6 +982,16 @@ export class GameRoom extends DurableObject<Env> {
   }
 
   private stopTickingIfIdle(): void {
+    // Pending sockets count: someone is mid-join and must not find an emptied room.
+    const humans =
+      this.pending.size > 0 || [...this.players.values()].some((p) => p.ws !== null);
+    if (!humans) {
+      // No one is watching: clear bots so the room can go fully idle.
+      for (const p of [...this.players.values()]) {
+        if (p.ws === null) this.players.delete(p.id);
+      }
+      this.botsSpawned = false;
+    }
     if (this.players.size === 0 && this.pending.size === 0 && this.tickTimer !== null) {
       clearInterval(this.tickTimer);
       this.tickTimer = null;
@@ -556,6 +1017,11 @@ export class GameRoom extends DurableObject<Env> {
         p.hoverMs = 0;
         p.windowDist = 0;
         p.windowStart = now;
+        if (p.bot) {
+          // Fresh brain: no instant zero-reaction revenge shot, no stale path.
+          p.bot = newBrain();
+          p.nextShotAt = now + 1500;
+        }
         this.broadcast({
           type: "spawn",
           id: p.id,
@@ -569,7 +1035,7 @@ export class GameRoom extends DurableObject<Env> {
 
     // Idle sockets (client pings every 5s, so 30s of silence means it is gone).
     for (const p of [...this.players.values()]) {
-      if (now - p.lastSeen > IDLE_TIMEOUT_MS) {
+      if (p.ws !== null && now - p.lastSeen > IDLE_TIMEOUT_MS) {
         const ws = p.ws;
         this.dropSocket(ws); // also broadcasts the roster
         try {
@@ -597,6 +1063,17 @@ export class GameRoom extends DurableObject<Env> {
       if (now > entry.expiresAt) this.grace.delete(token);
     }
 
+    // Weapon pickups respawn.
+    for (let i = 0; i < this.items.length; i++) {
+      const slot = this.items[i];
+      if (!slot.avail && now >= slot.respawnAt) {
+        slot.avail = true;
+        this.broadcast({ type: "item", id: ITEM_SPAWNS[i].id, avail: true });
+      }
+    }
+
+    this.updateBots(now);
+    this.simulateNades(now);
     this.stopTickingIfIdle();
 
     // Consolidated state snapshot to everyone.
@@ -608,12 +1085,26 @@ export class GameRoom extends DurableObject<Env> {
         pitch: round3(p.pitch),
         hp: p.hp,
         dead: p.dead,
+        w: p.weapon,
       }));
-      this.broadcast({ type: "state", players });
+      const state: StateMsg = { type: "state", players };
+      if (this.nades.length > 0) {
+        state.nades = this.nades.map((n) => ({
+          id: n.id,
+          p: [round2(n.pos.x), round2(n.pos.y), round2(n.pos.z)],
+        }));
+      }
+      this.broadcast(state);
     }
   }
 
   // --- Helpers ---------------------------------------------------------------------------
+
+  private newId(): string {
+    let id = crypto.randomUUID().slice(0, 8);
+    while (this.players.has(id)) id = crypto.randomUUID().slice(0, 8);
+    return id;
+  }
 
   private floodCheck(player: Player): boolean {
     const now = Date.now();
@@ -624,11 +1115,13 @@ export class GameRoom extends DurableObject<Env> {
     player.msgCount += 1;
     if (player.msgCount > MAX_MSGS_PER_SEC) {
       const ws = player.ws;
-      this.dropSocket(ws);
-      try {
-        ws.close(CLOSE_REJOIN, "message flood");
-      } catch {
-        // already closed
+      if (ws !== null) {
+        this.dropSocket(ws);
+        try {
+          ws.close(CLOSE_REJOIN, "message flood");
+        } catch {
+          // already closed
+        }
       }
       return true;
     }
@@ -681,6 +1174,7 @@ export class GameRoom extends DurableObject<Env> {
   private broadcast(msg: ServerMsg): void {
     const data = JSON.stringify(msg);
     for (const p of this.players.values()) {
+      if (p.ws === null) continue;
       try {
         p.ws.send(data);
       } catch {
@@ -689,7 +1183,8 @@ export class GameRoom extends DurableObject<Env> {
     }
   }
 
-  private send(ws: WebSocket, msg: ServerMsg): void {
+  private send(ws: WebSocket | null, msg: ServerMsg): void {
+    if (ws === null) return;
     try {
       ws.send(JSON.stringify(msg));
     } catch {
