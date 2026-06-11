@@ -5,7 +5,16 @@
 
 import * as THREE from "three";
 
-import { ARENA_HALF, OBSTACLES, SPAWN_POINTS, WALLS, WALL_HEIGHT } from "../shared/map";
+import {
+  ARENA_HALF,
+  HAZARDS,
+  JUMP_PADS,
+  OBSTACLES,
+  SPAWN_POINTS,
+  TELEPORTERS,
+  WALLS,
+  WALL_HEIGHT,
+} from "../shared/map";
 import type { AABB } from "../shared/map";
 import type { PlayerScore } from "../shared/protocol";
 import { crateTexture, floorTexture, monolithTexture, wallTexture } from "./textures";
@@ -113,10 +122,174 @@ function boxMesh(aabb: AABB, material: THREE.Material): THREE.Mesh {
   return mesh;
 }
 
-export function buildScene(): { scene: THREE.Scene; screen: ScreenBoard } {
+export function buildScene(): {
+  scene: THREE.Scene;
+  screen: ScreenBoard;
+  tick: (now: number, dt: number) => void;
+} {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x07090d);
-  scene.fog = new THREE.FogExp2(0x07090d, 0.016);
+  scene.background = new THREE.Color(0x0a0708);
+  scene.fog = new THREE.FogExp2(0x0a0708, 0.014);
+  const animations: Array<(now: number, dt: number) => void> = [];
+
+  // --- Ember sky: a gradient dome (dark zenith, smouldering horizon) ----------
+  {
+    const skyCanvas = document.createElement("canvas");
+    skyCanvas.width = 4;
+    skyCanvas.height = 128;
+    const c = skyCanvas.getContext("2d");
+    if (c) {
+      const grad = c.createLinearGradient(0, 0, 0, 128);
+      grad.addColorStop(0, "#050507");
+      grad.addColorStop(0.62, "#0c0708");
+      grad.addColorStop(0.82, "#2a0d06");
+      grad.addColorStop(0.95, "#571f08");
+      grad.addColorStop(1, "#6b2a0a");
+      c.fillStyle = grad;
+      c.fillRect(0, 0, 4, 128);
+    }
+    const skyTex = new THREE.CanvasTexture(skyCanvas);
+    skyTex.colorSpace = THREE.SRGBColorSpace;
+    const sky = new THREE.Mesh(
+      new THREE.SphereGeometry(180, 24, 16),
+      new THREE.MeshBasicMaterial({ map: skyTex, side: THREE.BackSide, fog: false }),
+    );
+    scene.add(sky);
+  }
+
+  // --- Drifting ash ------------------------------------------------------------
+  {
+    const COUNT = 350;
+    const positions = new Float32Array(COUNT * 3);
+    for (let i = 0; i < COUNT; i++) {
+      positions[i * 3] = (Math.random() - 0.5) * ARENA_HALF * 2;
+      positions[i * 3 + 1] = Math.random() * 14;
+      positions[i * 3 + 2] = (Math.random() - 0.5) * ARENA_HALF * 2;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    const ash = new THREE.Points(
+      geo,
+      new THREE.PointsMaterial({ color: 0x8a7a6a, size: 0.07, transparent: true, opacity: 0.7 }),
+    );
+    scene.add(ash);
+    animations.push((now, dt) => {
+      const arr = geo.attributes.position.array as Float32Array;
+      for (let i = 0; i < COUNT; i++) {
+        arr[i * 3 + 1] -= dt * (0.25 + (i % 5) * 0.08);
+        arr[i * 3] += Math.sin(now / 2400 + i) * dt * 0.18;
+        if (arr[i * 3 + 1] < 0) arr[i * 3 + 1] = 14;
+      }
+      geo.attributes.position.needsUpdate = true;
+    });
+  }
+
+  // --- Lava pools ------------------------------------------------------------------
+  {
+    const lavaCanvas = document.createElement("canvas");
+    lavaCanvas.width = 256;
+    lavaCanvas.height = 256;
+    const c = lavaCanvas.getContext("2d");
+    if (c) {
+      c.fillStyle = "#3a0a02";
+      c.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 60; i++) {
+        const x = Math.random() * 256;
+        const y = Math.random() * 256;
+        const r = 8 + Math.random() * 30;
+        const g = c.createRadialGradient(x, y, 2, x, y, r);
+        g.addColorStop(0, "rgba(255,180,40,0.95)");
+        g.addColorStop(0.5, "rgba(255,90,10,0.6)");
+        g.addColorStop(1, "rgba(80,10,0,0)");
+        c.fillStyle = g;
+        c.beginPath();
+        c.arc(x, y, r, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+    const lavaTex = new THREE.CanvasTexture(lavaCanvas);
+    lavaTex.colorSpace = THREE.SRGBColorSpace;
+    lavaTex.wrapS = THREE.RepeatWrapping;
+    lavaTex.wrapT = THREE.RepeatWrapping;
+
+    for (const pool of HAZARDS) {
+      const w = pool.max.x - pool.min.x;
+      const d = pool.max.z - pool.min.z;
+      const cx = (pool.min.x + pool.max.x) / 2;
+      const cz = (pool.min.z + pool.max.z) / 2;
+      const mat = new THREE.MeshBasicMaterial({ map: lavaTex });
+      const surface = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+      surface.rotation.x = -Math.PI / 2;
+      surface.position.set(cx, 0.03, cz);
+      scene.add(surface);
+
+      const rim = new THREE.Mesh(
+        new THREE.BoxGeometry(w + 0.5, 0.1, d + 0.5),
+        new THREE.MeshStandardMaterial({ color: 0x16100c, roughness: 0.9 }),
+      );
+      rim.position.set(cx, 0.05, cz);
+      scene.add(rim);
+      // carve the opening illusion: surface sits above the rim plate
+      surface.position.y = 0.12;
+
+      const glow = new THREE.PointLight(0xff5510, 40, 18, 1.6);
+      glow.position.set(cx, 1.4, cz);
+      scene.add(glow);
+      animations.push((now) => {
+        glow.intensity = 36 + Math.sin(now / 230 + cx) * 7 + Math.sin(now / 97) * 4;
+        lavaTex.offset.x = Math.sin(now / 4000) * 0.06;
+        lavaTex.offset.y = now / 30000;
+      });
+    }
+  }
+
+  // --- Teleporter pads ---------------------------------------------------------------
+  for (const pad of TELEPORTERS) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.55, 0.95, 28),
+      new THREE.MeshBasicMaterial({ color: 0x9966ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(pad.pos.x, 0.03, pad.pos.z);
+    scene.add(ring);
+    const beam = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.55, 0.75, 4.5, 16, 1, true),
+      new THREE.MeshBasicMaterial({
+        color: 0x9966ff,
+        transparent: true,
+        opacity: 0.16,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    beam.position.set(pad.pos.x, 2.25, pad.pos.z);
+    scene.add(beam);
+    const light = new THREE.PointLight(0x9966ff, 14, 9, 1.8);
+    light.position.set(pad.pos.x, 1.4, pad.pos.z);
+    scene.add(light);
+    animations.push((now) => {
+      ring.rotation.z = now / 900;
+      (beam.material as THREE.MeshBasicMaterial).opacity = 0.12 + Math.sin(now / 350) * 0.05;
+    });
+  }
+
+  // --- Jump pads ------------------------------------------------------------------------
+  for (const pad of JUMP_PADS) {
+    const plate = new THREE.Mesh(
+      new THREE.CylinderGeometry(pad.radius, pad.radius + 0.15, 0.1, 20),
+      new THREE.MeshStandardMaterial({ color: 0x1c2128, roughness: 0.5, metalness: 0.6 }),
+    );
+    plate.position.set(pad.pos.x, 0.05, pad.pos.z);
+    scene.add(plate);
+    const chevMat = new THREE.MeshBasicMaterial({ color: 0x00ffc8, transparent: true, opacity: 0.9 });
+    const chev = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.5, 4), chevMat);
+    chev.position.set(pad.pos.x, 0.45, pad.pos.z);
+    scene.add(chev);
+    animations.push((now) => {
+      chev.position.y = 0.45 + ((now / 600) % 1) * 0.5;
+      chevMat.opacity = 0.9 - ((now / 600) % 1) * 0.7;
+    });
+  }
 
   // --- Lighting -------------------------------------------------------------
   scene.add(new THREE.HemisphereLight(0x2c3644, 0x0a0c0e, 0.7));
@@ -350,5 +523,9 @@ export function buildScene(): { scene: THREE.Scene; screen: ScreenBoard } {
     scene.add(ring);
   }
 
-  return { scene, screen };
+  const tick = (now: number, dt: number): void => {
+    for (const fn of animations) fn(now, dt);
+  };
+
+  return { scene, screen, tick };
 }

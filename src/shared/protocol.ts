@@ -20,14 +20,27 @@ export interface PlayerSnapshot {
   yaw: number;
   pitch: number;
   hp: number;
+  s: number; // shield
   dead: boolean;
   w: WeaponId; // currently held weapon (drives avatar/viewmodel display)
+  b: number; // active buff bitmask (BUFF_OVERDRIVE | BUFF_BOOTS)
 }
 
-/** A live grenade in flight (server-simulated). */
+/** A live projectile in flight (server-simulated). k: f=frag grenade, r=rocket. */
 export interface NadeSnapshot {
   id: number;
+  k: "f" | "r" | "b";
   p: [number, number, number];
+}
+
+/** A horde monster in a state snapshot. */
+export interface MonsterSnapshot {
+  id: number;
+  k: "fiend" | "drone" | "warden";
+  p: [number, number, number];
+  yaw: number;
+  hp: number;
+  mh: number; // max hp (boss bar)
 }
 
 export interface ItemState {
@@ -82,6 +95,8 @@ export interface WelcomeMsg {
   hp: number;
   roster: PlayerScore[];
   items: ItemState[]; // current weapon-pickup availability
+  /** Whether the secret door is currently open (joiners need the live state). */
+  door: boolean;
 }
 
 export interface RosterMsg {
@@ -91,9 +106,73 @@ export interface RosterMsg {
 
 export interface StateMsg {
   type: "state";
+  /** Server clock (ms) — clients sync dynamic geometry (elevator) to this. */
+  t: number;
   players: PlayerSnapshot[];
   /** Present only while grenades are in flight. */
   nades?: NadeSnapshot[];
+  /** Present only in horde mode while monsters are alive. */
+  m?: MonsterSnapshot[];
+}
+
+/** Horde wave state (broadcast on every change; `left` = monsters remaining). */
+export interface WaveMsg {
+  type: "wave";
+  n: number;
+  state: "incoming" | "active" | "cleared";
+  left: number;
+}
+
+/** A monster died. */
+export interface MDeathMsg {
+  type: "mdeath";
+  id: number;
+  k: "fiend" | "drone" | "warden";
+  by: string;
+  p: [number, number, number];
+}
+
+/** The Warden telegraphs a slam landing at `at` (server time) around `p`. */
+export interface SlamMsg {
+  type: "slam";
+  p: [number, number, number];
+  at: number;
+}
+
+/** Everyone died: the horde run ends; arena resets shortly. */
+export interface HordeEndMsg {
+  type: "hordeend";
+  wave: number;
+  roster: PlayerScore[];
+  nextIn: number;
+}
+
+/** The secret door changed state (broadcast). */
+export interface DoorMsg {
+  type: "door";
+  open: boolean;
+}
+
+/** Frag limit reached: show the podium, scores reset shortly. */
+export interface MatchEndMsg {
+  type: "matchend";
+  winnerId: string;
+  roster: PlayerScore[];
+  /** Seconds until the next match starts. */
+  nextIn: number;
+}
+
+/** Fresh match: zeroed roster, all pickups back. */
+export interface MatchStartMsg {
+  type: "matchstart";
+  roster: PlayerScore[];
+  items: ItemState[];
+}
+
+/** Someone held the bastion roof solo for the control interval (+1 score). */
+export interface ZoneMsg {
+  type: "zone";
+  id: string;
 }
 
 /** One resolved hitscan ray within a shot (shotguns fire several). */
@@ -133,6 +212,13 @@ export interface HealMsg {
   hp: number;
 }
 
+/** Authoritative ammo echo after each accepted shot (shooter only). */
+export interface AmmoMsg {
+  type: "ammo";
+  w: WeaponId;
+  n: number;
+}
+
 /** A grenade detonated (broadcast): explosion effects + splash already applied. */
 export interface BoomMsg {
   type: "boom";
@@ -143,9 +229,10 @@ export interface BoomMsg {
 export interface HitMsg {
   type: "hit";
   id: string; // victim
-  by: string; // shooter
+  by: string; // shooter id, or an environmental killer like "env:lava"
   dmg: number;
   hp: number; // victim hp after damage
+  s: number; // victim shield after damage
 }
 
 export interface DeathMsg {
@@ -161,6 +248,23 @@ export interface SpawnMsg {
   yaw: number;
   e: number; // new spawn epoch for that player
   hp: number;
+  /** Set when this is a teleporter hop, not a (re)spawn — different effects. */
+  tp?: boolean;
+}
+
+/** A power-up was collected (sent to the collector only). */
+export interface BuffMsg {
+  type: "buff";
+  k: "overdrive" | "boots" | "overshield";
+  /** Server time the buff expires (0 for instant effects like overshield). */
+  ms: number;
+}
+
+/** Killstreak / multi-kill announcements (broadcast; client renders the text). */
+export interface StreakMsg {
+  type: "streak";
+  id: string; // who earned (or whose streak "ended")
+  kind: "multi2" | "multi3" | "multi4" | "multi5" | "spree3" | "spree5" | "spree8" | "spree10" | "ended";
 }
 
 export interface FullMsg {
@@ -186,7 +290,18 @@ export type ServerMsg =
   | ItemMsg
   | PickupMsg
   | HealMsg
+  | AmmoMsg
   | BoomMsg
+  | BuffMsg
+  | StreakMsg
+  | DoorMsg
+  | MatchEndMsg
+  | MatchStartMsg
+  | ZoneMsg
+  | WaveMsg
+  | MDeathMsg
+  | SlamMsg
+  | HordeEndMsg
   | HitMsg
   | DeathMsg
   | SpawnMsg

@@ -153,6 +153,75 @@ export class Sfx {
     this.burst(t, 3200, 0.15, 0.08);
   }
 
+  shieldHit(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "triangle", 880, 620, 0.25, 0.08);
+  }
+
+  shieldDown(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "sawtooth", 700, 120, 0.3, 0.3);
+    this.burst(t, 1500, 0.2, 0.2);
+  }
+
+  teleport(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "sine", 200, 1400, 0.25, 0.18);
+    this.tone(t + 0.12, "sine", 1400, 300, 0.2, 0.22);
+    this.burst(t, 2600, 0.18, 0.25);
+  }
+
+  jumpPad(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "square", 140, 420, 0.3, 0.16);
+    this.burst(t, 700, 0.2, 0.1);
+  }
+
+  /** Escalating fanfare for streak announcements (level 1..4). */
+  sting(level: number): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    const base = 320 + level * 60;
+    for (let i = 0; i <= Math.min(level + 1, 4); i++) {
+      this.tone(t + i * 0.08, "square", base * (1 + i * 0.25), base * (1 + i * 0.25), 0.18, 0.12);
+    }
+    this.burst(t, 2000, 0.12, 0.15);
+  }
+
+  /** Wave-incoming war horn. */
+  horn(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "sawtooth", 92, 78, 0.4, 0.9);
+    this.tone(t, "sawtooth", 138, 118, 0.3, 0.9);
+    this.burst(t + 0.1, 400, 0.2, 0.7);
+  }
+
+  slamWarn(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.tone(t, "square", 220, 440, 0.25, 0.3);
+    this.tone(t + 0.35, "square", 220, 440, 0.25, 0.3);
+  }
+
+  monsterDie(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 600, 0.4, 0.2);
+    this.tone(t, "sawtooth", 160, 40, 0.3, 0.25);
+  }
+
+  door(): void {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.burst(t, 240, 0.4, 0.5);
+    this.tone(t, "sawtooth", 70, 45, 0.25, 0.55);
+  }
+
   throwNade(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

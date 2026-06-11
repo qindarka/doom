@@ -72,8 +72,15 @@ function obs(kind: ObstacleKind, b: AABB): Obstacle {
  * is pure cover. The client auto-steps up to 0.55m, so stairs are walkable.
  */
 export const OBSTACLES: Obstacle[] = [
-  // --- Central bastion: a 2.5m platform with stairs east and west ------------
-  obs("monolith", box(0, 0, 10, 10, 2.5)),
+  // --- Central bastion: hollow! A secret chamber hides inside, sealed by a
+  // shootable door on the north face (the door itself is dynamic geometry —
+  // see shared/dynamics.ts). Roof slab keeps the top walkable as before.
+  obs("monolith", box(-4.4, 0, 1.2, 10, 2.5)), // west wall
+  obs("monolith", box(4.4, 0, 1.2, 10, 2.5)), // east wall
+  obs("monolith", box(0, 4.4, 7.6, 1.2, 2.5)), // south wall
+  obs("monolith", box(-2.5, -4.4, 2.6, 1.2, 2.5)), // north wall, west of the door
+  obs("monolith", box(2.5, -4.4, 2.6, 1.2, 2.5)), // north wall, east of the door
+  obs("deck", box(0, 0, 10, 10, 0.4, 2.1)), // roof (top at 2.5, chamber headroom 2.1)
   // west stairs (0.5m risers, walk up via auto-step)
   obs("step", box(-5.6, 0, 1.2, 3, 2.0)),
   obs("step", box(-6.8, 0, 1.2, 3, 1.5)),
@@ -93,6 +100,9 @@ export const OBSTACLES: Obstacle[] = [
   obs("pillar", box(-4.9, -31.5, 0.9, 5, 3.2)),
   obs("pillar", box(4.9, -31.5, 0.9, 5, 3.2)),
   obs("roof", box(0, -31.7, 11, 5, 0.5, 3.2)),
+
+  // --- South sniper ledge, reached by the elevator (dynamic platform) ---------
+  obs("deck", box(3.5, 31.4, 9, 4.2, 0.4, 4.0)),
 
   // --- Side decks: fight under them, jump up via the wall-side 1.2m crate ----
   obs("deck", box(-22, 0, 7, 11, 0.3, 1.9)),
@@ -133,7 +143,50 @@ export const SOLIDS: AABB[] = [...WALLS, ...OBSTACLES];
 
 // --- Weapon pickups ------------------------------------------------------------
 
-export type ItemKind = "weapon" | "health";
+// --- Environment features ---------------------------------------------------------
+
+/**
+ * Lava pools: shallow XZ regions that tick damage on anyone standing in them
+ * (feet below max.y). Not solid — you can absolutely walk into one.
+ */
+export const HAZARDS: AABB[] = [
+  { min: { x: -5, y: 0, z: -15 }, max: { x: 5, y: 0.35, z: -11 } }, // north of the bastion
+  { min: { x: -5, y: 0, z: 11 }, max: { x: 5, y: 0.35, z: 15 } }, // south of the bastion
+];
+
+export function inHazard(x: number, y: number, z: number): boolean {
+  for (const h of HAZARDS) {
+    if (x > h.min.x && x < h.max.x && z > h.min.z && z < h.max.z && y < h.max.y) return true;
+  }
+  return false;
+}
+
+/** A bidirectional teleporter pair (NW corner ↔ SE corner). */
+export interface TeleporterPad {
+  pos: Vec3;
+  /** Index of the destination pad in TELEPORTERS. */
+  to: number;
+  radius: number;
+}
+
+export const TELEPORTERS: TeleporterPad[] = [
+  { pos: { x: -25, y: 0, z: -24.5 }, to: 1, radius: 1.0 },
+  { pos: { x: 25, y: 0, z: 24.5 }, to: 0, radius: 1.0 },
+];
+
+/** Jump pads: standing on one launches you up (onto the decks / the bastion). */
+export interface JumpPad {
+  pos: Vec3;
+  radius: number;
+}
+
+export const JUMP_PADS: JumpPad[] = [
+  { pos: { x: -22, y: 0, z: 6.8 }, radius: 1.1 }, // onto the west deck
+  { pos: { x: 22, y: 0, z: -6.8 }, radius: 1.1 }, // onto the east deck
+  { pos: { x: 0, y: 0, z: 6.5 }, radius: 1.1 }, // onto the bastion roof
+];
+
+export type ItemKind = "weapon" | "health" | "overdrive" | "boots" | "overshield";
 
 export interface ItemSpawn {
   id: number;
@@ -141,6 +194,10 @@ export interface ItemSpawn {
   /** Set when kind === "weapon". */
   weapon?: WeaponId;
   pos: Vec3; // where the floating pickup hovers
+  /** Respawn override, ms (default ITEM_RESPAWN_MS). The Smelter uses a long one. */
+  respawnMs?: number;
+  /** Announce respawns of this item to everyone (the Smelter event). */
+  announce?: boolean;
 }
 
 export const ITEM_SPAWNS: ItemSpawn[] = [
@@ -152,10 +209,18 @@ export const ITEM_SPAWNS: ItemSpawn[] = [
   { id: 3, kind: "weapon", weapon: "scrapshot", pos: { x: -22, y: 2.55, z: 0 } }, // west deck top
   { id: 4, kind: "weapon", weapon: "arcwelder", pos: { x: 0, y: 2.85, z: 3.2 } }, // bastion top
   { id: 5, kind: "weapon", weapon: "frag", pos: { x: 0, y: 0.45, z: 17 } }, // south field
-  // Medkits: sheltered under each side deck, plus one exposed in the open.
+  // Medkits: sheltered under each side deck, plus one beside the north lava pool.
   { id: 6, kind: "health", pos: { x: -22, y: 0.45, z: 2.5 } },
   { id: 7, kind: "health", pos: { x: 22, y: 0.45, z: -2.5 } },
-  { id: 8, kind: "health", pos: { x: 0, y: 0.45, z: -12 } },
+  { id: 8, kind: "health", pos: { x: 6.5, y: 0.45, z: -12 } },
+  // Rockets on the east deck (mirror of the west deck's scrapshot).
+  { id: 9, kind: "weapon", weapon: "lance", pos: { x: 22, y: 2.55, z: 0 } },
+  // Power-ups.
+  { id: 10, kind: "overdrive", pos: { x: 0, y: 2.85, z: -3.2 } }, // bastion roof, north
+  { id: 11, kind: "boots", pos: { x: 11, y: 0.45, z: 0 } }, // east stair base
+  // The secret chamber inside the bastion (shoot the north door panel).
+  { id: 12, kind: "overshield", pos: { x: -1.6, y: 0.45, z: 0 }, respawnMs: 60_000 },
+  { id: 13, kind: "weapon", weapon: "smelter", pos: { x: 1.6, y: 0.45, z: 0 }, respawnMs: 150_000, announce: true },
 ];
 
 // --- Spawn points -----------------------------------------------------------------

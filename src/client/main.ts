@@ -1,7 +1,7 @@
 // Entry point: landing page (display name → Join) that hands off to the Game.
 
 import "./style.css";
-import { MAX_PLAYERS, SOLO_ROOM_PREFIX } from "../shared/constants";
+import { HORDE_ROOM, MAX_PLAYERS, SOLO_ROOM_PREFIX } from "../shared/constants";
 import { Game } from "./game";
 import { Music } from "./music";
 
@@ -55,6 +55,10 @@ const practiceBtn = document.createElement("button");
 practiceBtn.className = "practice";
 practiceBtn.textContent = "Practice vs bots";
 
+const hordeBtn = document.createElement("button");
+hordeBtn.className = "practice horde";
+hordeBtn.textContent = "Horde co-op";
+
 const musicBtn = document.createElement("button");
 musicBtn.className = "music-toggle";
 musicBtn.title = "Toggle music (M)";
@@ -93,7 +97,11 @@ if ("ontouchstart" in window) {
   hint.append(warn);
 }
 
-overlay.append(title, subtitle, joinRow, practiceBtn, statusLine, hint, musicBtn);
+const modeRow = document.createElement("div");
+modeRow.className = "mode-row";
+modeRow.append(practiceBtn, hordeBtn);
+
+overlay.append(title, subtitle, joinRow, modeRow, statusLine, hint, musicBtn);
 app.append(overlay);
 
 // --- Room occupancy on the landing page --------------------------------------------
@@ -146,9 +154,10 @@ function join(room: string | null = null): void {
 
   localStorage.setItem(NAME_KEY, name);
   statusLine.classList.remove("error");
-  statusLine.textContent = room ? "starting practice…" : "connecting…";
+  statusLine.textContent = room ? "deploying…" : "connecting…";
   joinBtn.disabled = true;
   practiceBtn.disabled = true;
+  hordeBtn.disabled = true;
   nameInput.disabled = true;
   music.unlock();
   music.setMode("menu");
@@ -178,6 +187,7 @@ practiceBtn.addEventListener("click", () => {
   // A fresh private room per practice session.
   join(`${SOLO_ROOM_PREFIX}${crypto.randomUUID().slice(0, 12)}`);
 });
+hordeBtn.addEventListener("click", () => join(HORDE_ROOM));
 nameInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") join();
 });

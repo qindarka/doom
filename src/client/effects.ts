@@ -12,12 +12,90 @@ interface Transient {
   grow?: number;
 }
 
+interface Gib {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  spin: THREE.Vector3;
+  born: number;
+}
+
 export class Effects {
   private scene: THREE.Scene;
   private transients: Transient[] = [];
+  private gibList: Gib[] = [];
+  private lastUpdate = 0;
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
+  }
+
+  /** Death burst: armor chunks and bolts that bounce on the floor and fade. */
+  gibs(at: THREE.Vector3, color: number): void {
+    const now = performance.now();
+    const armorMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(color).multiplyScalar(0.85),
+      roughness: 0.5,
+      metalness: 0.5,
+      transparent: true,
+    });
+    const suitMat = new THREE.MeshStandardMaterial({
+      color: 0x1c2128,
+      roughness: 0.7,
+      metalness: 0.4,
+      transparent: true,
+    });
+    for (let i = 0; i < 11; i++) {
+      const s = 0.08 + Math.random() * 0.16;
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(s, s * (0.5 + Math.random()), s),
+        (i % 3 === 0 ? suitMat : armorMat).clone(),
+      );
+      mesh.position.set(at.x, at.y + 0.6 + Math.random() * 0.8, at.z);
+      this.scene.add(mesh);
+      this.gibList.push({
+        mesh,
+        vel: new THREE.Vector3(
+          (Math.random() - 0.5) * 7,
+          2.5 + Math.random() * 5,
+          (Math.random() - 0.5) * 7,
+        ),
+        spin: new THREE.Vector3(Math.random() * 10, Math.random() * 10, Math.random() * 10),
+        born: now,
+      });
+    }
+    armorMat.dispose();
+    suitMat.dispose();
+  }
+
+  /** Teleporter departure/arrival flash. */
+  /** Warden slam telegraph: a pulsing red danger ring on the ground. */
+  slamWarning(at: THREE.Vector3, msUntilImpact: number): void {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xff2200,
+      transparent: true,
+      opacity: 0.55,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    });
+    const ring = new THREE.Mesh(new THREE.RingGeometry(3.6, 5, 36), mat);
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.set(at.x, 0.06, at.z);
+    this.scene.add(ring);
+    this.transients.push({ obj: ring, mat, born: performance.now(), ttl: msUntilImpact + 250 });
+  }
+
+  teleportFlash(at: THREE.Vector3): void {
+    const mat = new THREE.MeshBasicMaterial({
+      color: 0xbb88ff,
+      transparent: true,
+      opacity: 0.85,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const column = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 2.4, 14, 1, true), mat);
+    column.position.set(at.x, at.y + 1.2, at.z);
+    this.scene.add(column);
+    this.transients.push({ obj: column, mat, born: performance.now(), ttl: 380, grow: 1.6 });
   }
 
   /** Glowing beam from `from` to `to`, fading out over ~110ms. */
@@ -116,6 +194,9 @@ export class Effects {
   }
 
   update(now: number): void {
+    const dt = Math.min(0.05, this.lastUpdate ? (now - this.lastUpdate) / 1000 : 0.016);
+    this.lastUpdate = now;
+
     for (let i = this.transients.length - 1; i >= 0; i--) {
       const t = this.transients[i];
       const age = (now - t.born) / t.ttl;
@@ -132,40 +213,107 @@ export class Effects {
         t.obj.scale.set(s, s, s);
       }
     }
+
+    const GIB_TTL = 1600;
+    for (let i = this.gibList.length - 1; i >= 0; i--) {
+      const g = this.gibList[i];
+      const age = now - g.born;
+      if (age >= GIB_TTL) {
+        this.scene.remove(g.mesh);
+        g.mesh.geometry.dispose();
+        (g.mesh.material as THREE.Material).dispose();
+        this.gibList.splice(i, 1);
+        continue;
+      }
+      g.vel.y -= 20 * dt;
+      g.mesh.position.addScaledVector(g.vel, dt);
+      if (g.mesh.position.y < 0.06) {
+        g.mesh.position.y = 0.06;
+        g.vel.y = Math.abs(g.vel.y) > 1 ? -g.vel.y * 0.4 : 0;
+        g.vel.x *= 0.7;
+        g.vel.z *= 0.7;
+      }
+      g.mesh.rotation.x += g.spin.x * dt;
+      g.mesh.rotation.y += g.spin.y * dt;
+      g.mesh.rotation.z += g.spin.z * dt;
+      (g.mesh.material as THREE.MeshStandardMaterial).opacity = Math.min(1, (GIB_TTL - age) / 500);
+    }
   }
 }
 
 /** Live grenades, driven by server state snapshots with local smoothing. */
 export class NadeView {
   private scene: THREE.Scene;
-  private nades = new Map<number, { group: THREE.Group; target: THREE.Vector3 }>();
+  private nades = new Map<number, { group: THREE.Group; target: THREE.Vector3; rocket: boolean }>();
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
   }
 
-  sync(snapshots: Array<{ id: number; p: [number, number, number] }>): void {
+  sync(snapshots: Array<{ id: number; k?: "f" | "r" | "b"; p: [number, number, number] }>): void {
     const seen = new Set<number>();
     for (const snap of snapshots) {
       seen.add(snap.id);
       let nade = this.nades.get(snap.id);
       if (!nade) {
         const group = new THREE.Group();
-        const shell = new THREE.Mesh(
-          new THREE.SphereGeometry(0.13, 10, 10),
-          new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.35, metalness: 0.7 }),
-        );
-        group.add(shell);
-        const fuseLight = new THREE.PointLight(0xff4455, 6, 5, 2);
-        group.add(fuseLight);
-        const band = new THREE.Mesh(
-          new THREE.TorusGeometry(0.13, 0.025, 6, 12),
-          new THREE.MeshBasicMaterial({ color: 0xff4455 }),
-        );
-        group.add(band);
+        if (snap.k === "b") {
+          // Drone bolt: a hot teal plasma blob.
+          const blob = new THREE.Mesh(
+            new THREE.SphereGeometry(0.12, 8, 8),
+            new THREE.MeshBasicMaterial({
+              color: 0x55ffee,
+              transparent: true,
+              opacity: 0.95,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            }),
+          );
+          group.add(blob);
+          group.add(new THREE.PointLight(0x33ddff, 8, 6, 2));
+        } else if (snap.k === "r") {
+          // Rocket: dark dart with a hot exhaust glow (oriented in update()).
+          const body = new THREE.Mesh(
+            new THREE.ConeGeometry(0.09, 0.45, 10),
+            new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.35, metalness: 0.7 }),
+          );
+          body.rotation.x = Math.PI / 2; // cone tip toward -z... oriented via lookAt below
+          group.add(body);
+          const exhaust = new THREE.Mesh(
+            new THREE.SphereGeometry(0.09, 8, 8),
+            new THREE.MeshBasicMaterial({
+              color: 0xffaa44,
+              transparent: true,
+              opacity: 0.9,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false,
+            }),
+          );
+          exhaust.position.z = -0.28;
+          group.add(exhaust);
+          const fire = new THREE.PointLight(0xff7722, 10, 7, 2);
+          group.add(fire);
+        } else {
+          const shell = new THREE.Mesh(
+            new THREE.SphereGeometry(0.13, 10, 10),
+            new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.35, metalness: 0.7 }),
+          );
+          group.add(shell);
+          const fuseLight = new THREE.PointLight(0xff4455, 6, 5, 2);
+          group.add(fuseLight);
+          const band = new THREE.Mesh(
+            new THREE.TorusGeometry(0.13, 0.025, 6, 12),
+            new THREE.MeshBasicMaterial({ color: 0xff4455 }),
+          );
+          group.add(band);
+        }
         group.position.set(snap.p[0], snap.p[1], snap.p[2]);
         this.scene.add(group);
-        nade = { group, target: new THREE.Vector3(snap.p[0], snap.p[1], snap.p[2]) };
+        nade = {
+          group,
+          target: new THREE.Vector3(snap.p[0], snap.p[1], snap.p[2]),
+          rocket: snap.k === "r" || snap.k === "b",
+        };
         this.nades.set(snap.id, nade);
       }
       nade.target.set(snap.p[0], snap.p[1], snap.p[2]);
@@ -194,10 +342,17 @@ export class NadeView {
   update(dt: number, now: number): void {
     const blend = Math.min(1, dt * 14);
     for (const nade of this.nades.values()) {
+      if (nade.rocket) {
+        // Point the dart along its motion.
+        if (nade.group.position.distanceToSquared(nade.target) > 0.0004) {
+          nade.group.lookAt(nade.target);
+        }
+        nade.group.position.lerp(nade.target, Math.min(1, dt * 22));
+        continue;
+      }
       nade.group.position.lerp(nade.target, blend);
       nade.group.rotation.x += dt * 6;
-      // Blinking fuse, faster as it gets old (clients don't know the fuse —
-      // a steady quick blink reads fine).
+      // Blinking fuse — clients don't know the fuse; a steady quick blink reads fine.
       const light = nade.group.children[1] as THREE.PointLight;
       light.intensity = Math.sin(now / 60) > 0 ? 7 : 1;
     }
@@ -230,6 +385,47 @@ function buildGun(parent: THREE.Group, w: WeaponId): number {
     grip.rotation.x = 0.32;
     parent.add(grip);
     return -0.56;
+  }
+
+  if (w === "lance") {
+    // Shoulder-style rocket tube with a glowing muzzle ring.
+    const glow = new THREE.MeshBasicMaterial({ color: 0xff7722 });
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.62, 12), dark);
+    tube.rotation.x = Math.PI / 2;
+    tube.position.set(0, 0.02, -0.32);
+    parent.add(tube);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.02, 6, 14), glow);
+    ring.position.set(0, 0.02, -0.63);
+    parent.add(ring);
+    const sightBox = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.07, 0.12), accent);
+    sightBox.position.set(0, 0.13, -0.2);
+    parent.add(sightBox);
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.17, 0.1), accent);
+    grip.position.set(0, -0.13, 0.05);
+    grip.rotation.x = 0.32;
+    parent.add(grip);
+    return -0.66;
+  }
+
+  if (w === "smelter") {
+    // The super-weapon: a fat white-hot induction cannon.
+    const glow = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.5), dark);
+    parent.add(body);
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 12), accent);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.set(0, 0.04, -0.45);
+    parent.add(barrel);
+    for (let i = 0; i < 3; i++) {
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 6, 14), glow);
+      coil.position.set(0, 0.04, -0.3 - i * 0.14);
+      parent.add(coil);
+    }
+    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), accent);
+    grip.position.set(0, -0.16, 0.1);
+    grip.rotation.x = 0.32;
+    parent.add(grip);
+    return -0.72;
   }
 
   if (w === "frag") {

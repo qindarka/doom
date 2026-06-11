@@ -19,34 +19,51 @@ WebSocket is same-origin and one `git push` deploys everything atomically.
 
 ## Gameplay
 
-- Pointer-lock mouse look, WASD movement, Space to jump, auto-step up stairs —
-  fast arena movement across two height levels (decks, the central bastion).
-- **Four weapons.** The infinite **Riveter** (25 dmg, ~4/sec) is always with
-  you; grab the rest at the **Armory** counter or at field spawns (respawn 20s):
-  - **Scrapshot** — 7-pellet scatter gun, brutal up close (8 shells)
+- Pointer-lock mouse look, WASD, Space to jump, auto-step up stairs, **jump
+  pads** onto the decks and bastion, **teleporter pads** linking opposite
+  corners, and an **elevator** up to the south sniper ledge.
+- **Halo-style energy shield over Doom-style health**: the shield absorbs
+  damage first and recharges after 5s out of combat; health only heals via
+  medkits. Retreat, recharge, re-engage.
+- **Six weapons.** The infinite **Riveter** is always with you; grab the rest
+  at the **Armory** counter or field spawns:
+  - **Scrapshot** — 7-pellet scatter gun (8 shells)
   - **Arcwelder** — 70-damage precision beam (5 charges)
-  - **Frag Charge** — thrown grenade with real physics: bounces, 2s fuse, 6m
-    splash that walls actually shield you from (3 charges)
-  - Switch with **1–4** or cycle with **Ctrl** (Windows and macOS).
-- **Medkits** (+50 integrity) under each side deck and one exposed mid-field;
-  only consumable while hurt.
+  - **Frag Charge** — bouncing grenade, 2s fuse, walls shield the blast
+  - **Pyrelance** — rockets that detonate on impact (4 rockets)
+  - **The Smelter** — a 200-damage super-cannon hidden in the secret chamber,
+    announced arena-wide when it comes online (every 150s)
+  - Switch with **1–6** or cycle with **Ctrl** (Windows and macOS).
+- **Power-ups**: Overdrive (×2 damage), Afterburners (×1.4 speed — the server
+  validates the boost), Overshield (double shield), and medkits.
+- **Lava pools** flank the bastion: 10 damage/sec, and yes, the killfeed
+  credits THE SLAG.
+- **A secret**: the bastion is hollow. Shoot the discolored panel on its north
+  face and the door slides open — overshield and the Smelter live inside.
+  "SECRET FOUND" awaits the first-timer.
+- **Matches**: first to 20 points wins (frags + bastion-control bonuses:
+  hold the roof alone for 10s for +1). Podium screen, then a fresh arena.
+- **Killstreaks**: DOUBLE FRAG through OVERKILL, KILLING SPREE through GODLIKE,
+  with arena-wide announcements; deaths burst into bouncing armor gibs.
 - **Server-validated combat.** Clients only *claim* shots; the Durable Object
-  re-raycasts every pellet against its own view of the world, simulates every
-  grenade itself, and enforces fire-rate, ammo, muzzle-origin, movement-speed,
-  anti-fly and wall-embedding checks.
-- Health states are unmissable: the integrity panel shifts OPTIMAL → DAMAGED →
-  CRITICAL, a red vignette closes in as you near death, and your heartbeat gets
-  audible below 30.
-- Die → killfeed + death screen → auto-respawn after 3s at the spawn point
-  farthest from living enemies (pickups drop on death).
-- Live scoreboard (hold **Tab**) — also mirrored on the **jumbotron** above the
-  central bastion, with the latest frag on its ticker.
-- **Practice mode**: one click on the landing page drops you into a private
-  arena against 3 AI bots that roam waypoints, take cover-aware shots, lob
-  grenades at mid-range, and grab pickups.
-- Generative, key-free industrial ambient soundtrack (toggle **M**) — sparse on
-  the menu, heartbeat-pulse layer in the arena. All audio is synthesized; the
-  repo contains zero binary assets.
+  re-raycasts every pellet, simulates every projectile, and enforces
+  fire-rate, ammo, muzzle-origin, movement-speed, anti-fly and wall-embedding
+  checks (including the sliding door and the moving elevator).
+- Health states are unmissable: OPTIMAL → DAMAGED → CRITICAL, a closing red
+  vignette, an audible heartbeat below 30.
+- Live scoreboard (hold **Tab**) — mirrored on the **jumbotron** with a ticker
+  of frags, streaks, and events.
+- **Practice mode**: a private arena against 3 AI bots that roam waypoints,
+  strafe, lob grenades, and shop for weapons.
+- **HORDE CO-OP**: one shared arena where you and your friends fight waves of
+  monsters together (friendly fire off) — charging **Scrap Fiends**, flying
+  **Welder Drones** with plasma bolts, and every 5th wave the **Foundry
+  Warden**, a boss with a telegraphed area slam you must dodge. Monsters pour
+  from wall vents; the fallen revive when the wave is cleared; a full wipe ends
+  the run with a "SURVIVED TO WAVE N" tally.
+- Generative, key-free industrial ambient soundtrack (toggle **M**); ember sky
+  and drifting ash. All audio synthesized, all textures procedural — the repo
+  contains zero binary assets.
 - Room cap of 10; extra players get a friendly "room full" message.
 - Drop and reconnect within 60s and your score *and* combat state survive
   (reconnect token) — disconnecting is never a heal.

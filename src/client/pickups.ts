@@ -9,6 +9,31 @@ import { ITEM_SPAWNS } from "../shared/map";
 import type { ItemSpawn } from "../shared/map";
 
 const HEALTH_COLOR = 0x44ff77;
+const KIND_COLORS: Record<string, number> = {
+  health: HEALTH_COLOR,
+  overdrive: 0xffffff,
+  boots: 0x00ffc8,
+  overshield: 0xffd24a,
+};
+
+/** Power-ups render as glowing orbs with a distinctive inner shape. */
+function miniOrb(kind: string): THREE.Group {
+  const group = new THREE.Group();
+  const color = KIND_COLORS[kind] ?? 0xffffff;
+  const orb = new THREE.Mesh(
+    new THREE.SphereGeometry(0.26, 14, 12),
+    new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.35 }),
+  );
+  group.add(orb);
+  const core =
+    kind === "overdrive"
+      ? new THREE.Mesh(new THREE.OctahedronGeometry(0.13), new THREE.MeshBasicMaterial({ color }))
+      : kind === "boots"
+        ? new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.22, 4), new THREE.MeshBasicMaterial({ color }))
+        : new THREE.Mesh(new THREE.IcosahedronGeometry(0.12), new THREE.MeshBasicMaterial({ color }));
+  group.add(core);
+  return group;
+}
 
 /** A medkit: dark case with a glowing cross. */
 function miniKit(): THREE.Group {
@@ -41,6 +66,27 @@ function miniGun(w: WeaponId): THREE.Group {
     shell2.position.set(0.3, -0.05, 0.1);
     shell2.scale.setScalar(0.8);
     group.add(shell2);
+    return group;
+  }
+
+  if (w === "lance") {
+    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.75, 12), dark);
+    tube.rotation.x = Math.PI / 2;
+    group.add(tube);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.025, 6, 14), glow);
+    ring.position.z = -0.38;
+    group.add(ring);
+    return group;
+  }
+
+  if (w === "smelter") {
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.26, 0.6), dark);
+    group.add(body);
+    for (let i = 0; i < 3; i++) {
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.025, 6, 14), glow);
+      coil.position.z = -0.1 - i * 0.16;
+      group.add(coil);
+    }
     return group;
   }
 
@@ -88,11 +134,19 @@ export class Pickups {
       const root = new THREE.Group();
       root.position.set(spawn.pos.x, spawn.pos.y, spawn.pos.z);
 
-      const item = spawn.kind === "health" ? miniKit() : miniGun(spawn.weapon ?? "scrapshot");
+      const item =
+        spawn.kind === "health"
+          ? miniKit()
+          : spawn.kind === "weapon"
+            ? miniGun(spawn.weapon ?? "scrapshot")
+            : miniOrb(spawn.kind);
       item.scale.setScalar(1.15);
       root.add(item);
 
-      const color = spawn.kind === "health" ? HEALTH_COLOR : WEAPONS[spawn.weapon ?? "scrapshot"].color;
+      const color =
+        spawn.kind === "weapon"
+          ? WEAPONS[spawn.weapon ?? "scrapshot"].color
+          : (KIND_COLORS[spawn.kind] ?? 0xffffff);
       const ring = new THREE.Mesh(
         new THREE.RingGeometry(0.45, 0.6, 24),
         new THREE.MeshBasicMaterial({

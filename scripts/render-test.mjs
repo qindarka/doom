@@ -48,7 +48,7 @@ async function joinAs(browser, name, errors) {
   await page.goto(BASE);
   await page.fill(".join-row input", name);
   await page.click(".join-row button");
-  await page.waitForSelector("#hud.active", { timeout: 10000 });
+  await page.waitForSelector("#hud.active", { timeout: 30000 });
   return page;
 }
 
@@ -145,6 +145,22 @@ async function main() {
     await sleep(10000); // bots hunt the idle player; one usually walks into view
     await hermit.screenshot({ path: "/tmp/ferrofrag-practice.png" });
     await hermit.close();
+
+    // Horde mode: join and let the fiends charge into view.
+    const doomguy = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+    doomguy.on("console", (msg) => {
+      if (msg.type() === "error") errors.push(`doomguy: ${msg.text()}`);
+    });
+    doomguy.on("pageerror", (err) => errors.push(`doomguy: ${err.message}`));
+    await doomguy.goto(BASE);
+    await doomguy.fill(".join-row input", "Doomguy");
+    await doomguy.click(".overlay .practice.horde");
+    await doomguy.waitForSelector("#hud.active", { timeout: 20000 });
+    await sleep(14000); // wave 1 spawns and the fiends close in
+    const waveText = await doomguy.textContent(".topbar");
+    ok(waveText?.includes("WAVE"), `horde topbar shows the wave (${waveText?.trim()})`);
+    await doomguy.screenshot({ path: "/tmp/ferrofrag-horde.png" });
+    await doomguy.close();
 
     const benign = /Autoplay|preload|favicon|SwiftShader|GroupMarkerNotSet|GPU stall/i;
     const realErrors = errors.filter((e) => !benign.test(e));

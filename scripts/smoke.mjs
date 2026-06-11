@@ -95,7 +95,7 @@ class Client {
 
   async join(name, token) {
     await this.connect();
-    this.send({ type: "join", v: 2, name, ...(token ? { token } : {}) });
+    this.send({ type: "join", v: 3, name, ...(token ? { token } : {}) });
     const [welcome] = await this.waitFor((m) => m.type === "welcome" || m.type === "full");
     // Keep-alive pings like the real client, or the 30s idle kick fires on
     // long test runs.
@@ -240,15 +240,22 @@ async function main() {
     const len = Math.hypot(...d);
     d = d.map((v) => v / len);
 
+    // Shields absorb the first 50: two shots strip the shield, four more kill.
     const hits = [];
-    for (let shot = 0; shot < 4; shot++) {
+    const shields = [];
+    for (let shot = 0; shot < 6; shot++) {
       const c = alice.cursor();
       bob.send({ type: "shoot", o: eye, d, e: wB.e, w: "riveter" });
       const [hit] = await alice.waitFor((m) => m.type === "hit" && m.id === wA.id, { from: c });
       hits.push(hit.hp);
+      shields.push(hit.s);
       await sleep(300); // respect the fire-rate cap
     }
-    ok(JSON.stringify(hits) === "[75,50,25,0]", `hp sequence 75/50/25/0 (got ${hits})`);
+    ok(
+      JSON.stringify(hits) === "[100,100,75,50,25,0]",
+      `hp sequence 100/100/75/50/25/0 (got ${hits})`,
+    );
+    ok(JSON.stringify(shields) === "[25,0,0,0,0,0]", `shield sequence 25/0/0/0/0/0 (got ${shields})`);
 
     const [death] = await alice.waitFor((m) => m.type === "death");
     ok(death.id === wA.id && death.by === wB.id, "death event credits Bob");
@@ -313,8 +320,8 @@ async function main() {
     const carol = new Client("carol");
     const wC = await carol.join("Carol");
     ok(
-      Array.isArray(wC.items) && wC.items.length === 9 && wC.items.every((it) => it.avail),
-      "welcome lists 9 available pickups (weapons + medkits)",
+      Array.isArray(wC.items) && wC.items.length === 14 && wC.items.every((it) => it.avail),
+      "welcome lists 14 available pickups (weapons, medkits, power-ups, secrets)",
     );
 
     // Walk to the Armory counter and reach over it for the Scrapshot (item 0).
@@ -391,6 +398,19 @@ async function main() {
     const [boom] = await carol.waitFor((m) => m.type === "boom", { from: cN, timeout: 4000 });
     ok(boom.by === wC.id, "grenade detonates with thrower attribution");
 
+    // Lava: wade into the north pool and take environmental damage.
+    let lz = -28.45;
+    while (lz < -13.5) {
+      lz = Math.min(-13.5, lz + 0.7);
+      carol.send({ type: "input", p: [0, 0, lz], yaw: 0, pitch: 0, e: wC.e });
+      await sleep(100);
+    }
+    const [lavaHit] = await carol.waitFor(
+      (m) => m.type === "hit" && m.id === wC.id && m.by === "env:lava",
+      { timeout: 4000 },
+    );
+    ok(lavaHit.s < 50, `lava ticks environmental damage (shield ${lavaHit.s})`);
+
     carol.close();
     await alice.waitFor((m) => m.type === "roster" && m.players.length === 2);
 
@@ -412,6 +432,32 @@ async function main() {
     });
     ok(botMoved, "bots roam the arena (position changes between snapshots)");
     solo.close();
+
+    // --- horde mode ---------------------------------------------------------------------------
+    console.log("horde mode");
+    const hermit = new Client("hermit", `${WS_URL}?room=horde-arena`);
+    const wH = await hermit.join("Hermit");
+    ok(wH.type === "welcome", "horde room join succeeds");
+    const [incoming] = await hermit.waitFor((m) => m.type === "wave" && m.state === "incoming", {
+      timeout: 8000,
+    });
+    ok(incoming.n === 1, `wave 1 announced (got wave ${incoming.n})`);
+    const [withMonsters] = await hermit.waitFor(
+      (m) => m.type === "state" && Array.isArray(m.m) && m.m.length > 0,
+      { timeout: 12000 },
+    );
+    ok(withMonsters.m[0].k === "fiend", `monsters spawn (first is a ${withMonsters.m[0].k})`);
+    const firstPos = withMonsters.m[0].p;
+    await sleep(2000);
+    const cH = hermit.cursor();
+    const [later] = await hermit.waitFor(
+      (m) => m.type === "state" && Array.isArray(m.m) && m.m.some((x) => x.id === withMonsters.m[0].id),
+      { from: cH, timeout: 5000 },
+    );
+    const same = later.m.find((x) => x.id === withMonsters.m[0].id);
+    const crept = Math.hypot(same.p[0] - firstPos[0], same.p[2] - firstPos[2]);
+    ok(crept > 1, `fiend hunts the player (moved ${crept.toFixed(1)}m)`);
+    hermit.close();
 
     // --- room cap ------------------------------------------------------------------------------
     console.log("room cap");

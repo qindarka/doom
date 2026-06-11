@@ -5,7 +5,7 @@
 // asset arrive here — the WebSocket endpoint and the status API, both of which
 // are forwarded to a GameRoom Durable Object.
 
-import { SOLO_ROOM_PREFIX } from "../shared/constants";
+import { HORDE_ROOM, SOLO_ROOM_PREFIX } from "../shared/constants";
 import { GameRoom } from "./GameRoom";
 
 export { GameRoom };
@@ -23,6 +23,7 @@ const MAIN_ROOM = "main-arena";
  */
 function roomName(url: URL): string {
   const room = url.searchParams.get("room");
+  if (room === HORDE_ROOM) return room;
   if (room && room.startsWith(SOLO_ROOM_PREFIX) && /^[a-z0-9-]{6,48}$/.test(room)) {
     return room;
   }

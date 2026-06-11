@@ -1,7 +1,7 @@
 // Gameplay tuning shared by client and server. The server is authoritative for
 // everything combat-related; the client mirrors these values for prediction and feel.
 
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 /** Maximum players in the room. Joins beyond this are rejected with a "full" message. */
 export const MAX_PLAYERS = 10;
@@ -39,14 +39,28 @@ export const MOVE_WINDOW_DIST = 14;
 // --- Combat -----------------------------------------------------------------
 export const MAX_HEALTH = 100;
 
-export type WeaponId = "riveter" | "scrapshot" | "arcwelder" | "frag";
+/**
+ * Energy shield over health: absorbs damage first, recharges after a few
+ * seconds out of combat. Health underneath only heals via medkits.
+ */
+export const MAX_SHIELD = 50;
+export const SHIELD_REGEN_DELAY_MS = 5000;
+export const SHIELD_REGEN_PER_S = 30;
+/** The overshield power-up charges the shield to this (no regen above MAX_SHIELD). */
+export const OVERSHIELD = 100;
+
+export type WeaponId = "riveter" | "scrapshot" | "arcwelder" | "frag" | "lance" | "smelter";
 
 export interface ProjectileDef {
-  /** Initial speed, m/s (thrown along the aim direction with a slight up-bias). */
+  /** Initial speed, m/s. */
   speed: number;
   fuseMs: number;
   /** Splash radius; damage falls off linearly to zero at this distance. */
   radius: number;
+  /** Grenade-style arc + bounces (true) or straight flight (false). */
+  gravity: boolean;
+  /** Detonate on first contact (rockets) instead of bouncing until the fuse. */
+  impact: boolean;
 }
 
 export interface WeaponDef {
@@ -106,7 +120,28 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     spread: 0,
     ammo: 3,
     color: 0xff4455,
-    projectile: { speed: 17, fuseMs: 2000, radius: 6 },
+    projectile: { speed: 17, fuseMs: 2000, radius: 6, gravity: true, impact: false },
+  },
+  lance: {
+    name: "Pyrelance",
+    damage: 90,
+    cooldownMs: 1200,
+    range: 0,
+    pellets: 1,
+    spread: 0,
+    ammo: 4,
+    color: 0xff7722,
+    projectile: { speed: 28, fuseMs: 6000, radius: 5, gravity: false, impact: true },
+  },
+  smelter: {
+    name: "The Smelter",
+    damage: 200,
+    cooldownMs: 2500,
+    range: 200,
+    pellets: 1,
+    spread: 0,
+    ammo: 2,
+    color: 0xffffff,
   },
 };
 
@@ -125,6 +160,44 @@ export const PICKUP_DY = 1.2;
 /** Health restored by a medkit pickup (grabbed only when below max health). */
 export const HEALTH_PACK_HP = 50;
 
+// --- Power-ups -----------------------------------------------------------------
+export const OVERDRIVE_MS = 20_000; // x2 damage
+export const BOOTS_MS = 20_000; // x1.4 move speed
+export const BOOTS_MULT = 1.4;
+/** Buff bitmask flags carried in player snapshots. */
+export const BUFF_OVERDRIVE = 1;
+export const BUFF_BOOTS = 2;
+
+// --- Environment ------------------------------------------------------------------
+/** Lava pools: damage per second while standing in one (bypasses nothing — shields first). */
+export const LAVA_DPS = 10;
+/** Display names for non-player killers (DeathMsg.by). */
+export const ENV_KILLERS: Record<string, string> = {
+  "env:lava": "THE SLAG",
+  "m:fiend": "A SCRAP FIEND",
+  "m:drone": "A WELDER DRONE",
+  "m:warden": "THE FOUNDRY WARDEN",
+};
+
+/** Display names for monster kinds (killfeed victims, boss bar). */
+export const MONSTER_NAMES: Record<string, string> = {
+  fiend: "SCRAP FIEND",
+  drone: "WELDER DRONE",
+  warden: "FOUNDRY WARDEN",
+};
+
+/** Jump pads launch with this vertical velocity (apex ≈ 2.8m). */
+export const JUMP_PAD_VY = 10.6;
+export const TELEPORT_COOLDOWN_MS = 1500;
+
+// --- Match structure -----------------------------------------------------------------
+/** First to this many points (frags + zone bonuses) wins the match. */
+export const FRAG_LIMIT = 20;
+/** Podium time between matches. */
+export const INTERMISSION_MS = 12_000;
+/** Hold the bastion roof alone this long for +1 score. */
+export const ZONE_HOLD_MS = 10_000;
+
 /** Max horizontal distance between the claimed shot origin and the server's eye. */
 export const SHOT_ORIGIN_TOLERANCE = 1.5;
 /** Max vertical divergence of the claimed shot origin (covers mid-jump latency). */
@@ -135,6 +208,9 @@ export const RESPAWN_DELAY_MS = 3000;
 // --- Practice mode (solo rooms get server-side bots) ---------------------------
 export const SOLO_ROOM_PREFIX = "solo-";
 export const SOLO_BOT_COUNT = 3;
+
+/** The shared co-op horde arena (one room, like the main arena). */
+export const HORDE_ROOM = "horde-arena";
 
 // --- Connection hygiene ------------------------------------------------------
 /** Client sends a ping at this interval; server drops sockets silent for IDLE_TIMEOUT_MS. */

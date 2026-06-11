@@ -8,13 +8,14 @@ import {
   EYE_HEIGHT,
   GRAVITY,
   GROUND_ACCEL,
+  JUMP_PAD_VY,
   JUMP_VELOCITY,
   MOVE_SPEED,
   PLAYER_HEIGHT,
   PLAYER_RADIUS,
 } from "../shared/constants";
-import { ARENA_HALF, SOLIDS } from "../shared/map";
-import type { Vec3 } from "../shared/map";
+import { ARENA_HALF, JUMP_PADS, SOLIDS } from "../shared/map";
+import type { AABB, Vec3 } from "../shared/map";
 import { aabbIntersects, playerAABB, vec3 } from "../shared/math";
 import type { Input } from "./input";
 
@@ -33,6 +34,13 @@ export class LocalPlayer {
   dead = false;
   /** Spawn epoch echoed in every input/shoot message. */
   epoch = 1;
+  /** Speed multiplier while the boots buff is active (set by the game). */
+  speedMult = 1;
+  /** Set for one frame when a jump pad launches us (game plays effects). */
+  padLaunched = false;
+  /** Dynamic geometry (door, elevator) refreshed by the game each frame. */
+  extraSolids: AABB[] = [];
+  private solidsCache: AABB[] = SOLIDS;
 
   spawn(p: [number, number, number], yaw: number, epoch: number): void {
     this.pos = vec3(p[0], p[1], p[2]);
@@ -55,6 +63,8 @@ export class LocalPlayer {
   }
 
   update(dt: number, input: Input): void {
+    this.solidsCache = this.extraSolids.length > 0 ? [...SOLIDS, ...this.extraSolids] : SOLIDS;
+
     // Look — applied even while dead is handled by the caller (it skips update).
     const { dx, dy } = input.consumeMouse();
     this.yaw -= dx * MOUSE_SENS;
@@ -73,8 +83,9 @@ export class LocalPlayer {
       wishX = f * fx + s * rx;
       wishZ = f * fz + s * rz;
       const len = Math.hypot(wishX, wishZ);
-      wishX = (wishX / len) * MOVE_SPEED;
-      wishZ = (wishZ / len) * MOVE_SPEED;
+      const speed = MOVE_SPEED * this.speedMult;
+      wishX = (wishX / len) * speed;
+      wishZ = (wishZ / len) * speed;
     }
 
     const accel = this.grounded ? GROUND_ACCEL : AIR_ACCEL;
@@ -85,6 +96,19 @@ export class LocalPlayer {
     if (this.grounded && input.isDown("Space")) {
       this.vel.y = JUMP_VELOCITY;
       this.grounded = false;
+    }
+
+    // Jump pads launch hard the moment you stand on one.
+    this.padLaunched = false;
+    if (this.grounded && this.pos.y < 0.4) {
+      for (const pad of JUMP_PADS) {
+        if (Math.hypot(this.pos.x - pad.pos.x, this.pos.z - pad.pos.z) <= pad.radius) {
+          this.vel.y = JUMP_PAD_VY;
+          this.grounded = false;
+          this.padLaunched = true;
+          break;
+        }
+      }
     }
 
     this.vel.y -= GRAVITY * dt;
@@ -101,7 +125,7 @@ export class LocalPlayer {
     const lim = ARENA_HALF - PLAYER_RADIUS;
     this.pos[axis] = Math.min(lim, Math.max(-lim, this.pos[axis]));
 
-    for (const solid of SOLIDS) {
+    for (const solid of this.solidsCache) {
       const box = playerAABB(this.pos);
       if (!aabbIntersects(box, solid)) continue;
 
@@ -126,7 +150,7 @@ export class LocalPlayer {
 
   private collidesAny(at: Vec3): boolean {
     const box = playerAABB(at);
-    for (const solid of SOLIDS) {
+    for (const solid of this.solidsCache) {
       if (aabbIntersects(box, solid)) return true;
     }
     return false;
@@ -138,10 +162,11 @@ export class LocalPlayer {
 
     if (delta <= 0) {
       // Highest support under the player: the floor, or any solid top at-or-below
-      // our feet whose footprint we overlap horizontally.
+      // our feet whose footprint we overlap horizontally. Tops slightly ABOVE the
+      // feet also count — that's the elevator platform rising beneath us.
       let ground = 0;
       const box = playerAABB(this.pos);
-      for (const solid of SOLIDS) {
+      for (const solid of this.solidsCache) {
         const overlapXZ =
           box.min.x < solid.max.x &&
           box.max.x > solid.min.x &&
@@ -149,7 +174,13 @@ export class LocalPlayer {
           box.max.z > solid.min.z;
         if (!overlapXZ) continue;
         const top = solid.max.y;
-        if (top <= feet + EPS && top > ground) ground = top;
+        if (top <= feet + STEP_UP && top > ground) ground = top;
+      }
+      // Ride a platform that climbed past our feet since last frame.
+      if (this.grounded && ground > feet) {
+        this.pos.y = ground;
+        this.vel.y = 0;
+        return;
       }
       if (next <= ground) {
         this.pos.y = ground;
@@ -164,7 +195,7 @@ export class LocalPlayer {
       this.grounded = false;
       this.pos.y = next;
       const box = playerAABB(this.pos);
-      for (const solid of SOLIDS) {
+      for (const solid of this.solidsCache) {
         if (aabbIntersects(box, solid) && solid.min.y >= feet + 0.2) {
           this.pos.y = Math.max(feet, solid.min.y - PLAYER_HEIGHT - EPS);
           this.vel.y = 0;

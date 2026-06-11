@@ -3,7 +3,14 @@
 
 import * as THREE from "three";
 
-import { DEFAULT_WEAPON, INTERP_DELAY_MS, PLAYER_HEIGHT, WEAPONS } from "../shared/constants";
+import {
+  BUFF_BOOTS,
+  BUFF_OVERDRIVE,
+  DEFAULT_WEAPON,
+  INTERP_DELAY_MS,
+  PLAYER_HEIGHT,
+  WEAPONS,
+} from "../shared/constants";
 import type { WeaponId } from "../shared/constants";
 import type { PlayerScore, PlayerSnapshot } from "../shared/protocol";
 import { nameTexture } from "./textures";
@@ -18,7 +25,6 @@ interface Snapshot {
 }
 
 const BUFFER_MAX_AGE_MS = 1200;
-const DEATH_ANIM_MS = 450;
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
@@ -42,12 +48,12 @@ class RemoteAvatar {
   private legL!: THREE.Group;
   private legR!: THREE.Group;
   private armL!: THREE.Group;
+  private buffLight: THREE.PointLight | null = null;
   private weapon: WeaponId = DEFAULT_WEAPON;
   private buffer: Snapshot[] = [];
   private walkPhase = 0;
   private lastPose = { x: 0, z: 0, t: 0 };
   dead = false;
-  private deathStart = 0;
 
   constructor(score: PlayerScore) {
     this.builtName = score.name;
@@ -219,9 +225,29 @@ class RemoteAvatar {
     this.group.rotation.y = yaw;
   }
 
-  setDead(dead: boolean, now: number): void {
-    if (dead && !this.dead) this.deathStart = now;
+  /** Returns true on the alive→dead transition (the manager spawns gibs). */
+  setDead(dead: boolean): boolean {
+    const justDied = dead && !this.dead;
     this.dead = dead;
+    return justDied;
+  }
+
+  /** Buff bitmask from the snapshot: a glow telegraphs power-ups to everyone. */
+  setBuffs(b: number): void {
+    if (!this.buffLight) {
+      this.buffLight = new THREE.PointLight(0xffffff, 0, 5, 1.8);
+      this.buffLight.position.y = 1.2;
+      this.group.add(this.buffLight);
+    }
+    if (b & BUFF_OVERDRIVE) {
+      this.buffLight.color.setHex(0xffffff);
+      this.buffLight.intensity = 7;
+    } else if (b & BUFF_BOOTS) {
+      this.buffLight.color.setHex(0x00ffc8);
+      this.buffLight.intensity = 4;
+    } else {
+      this.buffLight.intensity = 0;
+    }
   }
 
   update(now: number): void {
@@ -256,16 +282,10 @@ class RemoteAvatar {
       }
     }
 
-    // Death/respawn animation: keel over and sink.
-    if (this.dead) {
-      const k = Math.min(1, (now - this.deathStart) / DEATH_ANIM_MS);
-      this.group.rotation.z = (Math.PI / 2) * k;
-      this.group.position.y -= 0.6 * k;
-      this.nameSprite.visible = false;
-    } else {
-      this.group.rotation.z = 0;
-      this.nameSprite.visible = true;
-    }
+    // Dead troopers burst into gibs (spawned by the Remotes manager); the body
+    // simply vanishes until the respawn snapshot.
+    this.group.visible = !this.dead;
+    this.nameSprite.visible = !this.dead;
   }
 
   private applyPose(x: number, y: number, z: number, yaw: number, pitch: number): void {
@@ -305,6 +325,8 @@ class RemoteAvatar {
 export class Remotes {
   private avatars = new Map<string, RemoteAvatar>();
   private scene: THREE.Scene;
+  /** Fired on each avatar's alive→dead transition (the game spawns gibs). */
+  onDeath: (id: string, pos: THREE.Vector3, color: number) => void = () => {};
 
   constructor(scene: THREE.Scene) {
     this.scene = scene;
@@ -343,13 +365,25 @@ export class Remotes {
       const avatar = this.avatars.get(snap.id);
       if (!avatar) continue;
       avatar.push(snap, now);
-      avatar.setDead(snap.dead, now);
+      if (avatar.setDead(snap.dead)) {
+        this.onDeath(
+          snap.id,
+          new THREE.Vector3(snap.p[0], snap.p[1], snap.p[2]),
+          avatar.builtColor,
+        );
+      }
       avatar.setWeapon(snap.w);
+      avatar.setBuffs(snap.b);
     }
   }
 
   teleport(id: string, p: [number, number, number], yaw: number, now: number): void {
     this.avatars.get(id)?.teleport(p, yaw, now);
+  }
+
+  positionOf(id: string): THREE.Vector3 | null {
+    const avatar = this.avatars.get(id);
+    return avatar && avatar.group.visible ? avatar.group.position.clone() : null;
   }
 
   muzzleOf(id: string): THREE.Vector3 | null {

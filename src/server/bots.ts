@@ -4,7 +4,7 @@
 // module owns everything that is pure geometry/state.
 
 import { PLAYER_RADIUS } from "../shared/constants";
-import { SOLIDS, WAYPOINTS } from "../shared/map";
+import { SOLIDS, WAYPOINTS, inHazard } from "../shared/map";
 import type { Vec3 } from "../shared/map";
 import { aabbIntersects, playerAABB, vec3 } from "../shared/math";
 
@@ -92,7 +92,7 @@ function walkable(ax: number, ay: number, az: number, bx: number, by: number, bz
     const x = ax + ((bx - ax) * i) / steps;
     const z = az + ((bz - az) * i) / steps;
     y = stepGround(x, z, y);
-    if (embedded(x, y, z)) return false;
+    if (embedded(x, y, z) || inHazard(x, y, z)) return false;
   }
   return Math.abs(y - by) <= STEP_UP;
 }

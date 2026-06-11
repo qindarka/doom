@@ -1,7 +1,7 @@
 // DOM-based HUD: crisp text, zero WebGL cost. All player-provided strings are
 // set via textContent (never innerHTML), so names can't inject markup.
 
-import { DEFAULT_WEAPON, MAX_HEALTH, MAX_PLAYERS, WEAPONS } from "../shared/constants";
+import { DEFAULT_WEAPON, MAX_HEALTH, MAX_PLAYERS, MAX_SHIELD, WEAPONS } from "../shared/constants";
 import type { WeaponId } from "../shared/constants";
 import type { PlayerScore } from "../shared/protocol";
 
@@ -27,11 +27,19 @@ export class Hud {
   private healthNum: HTMLElement;
   private healthFill: HTMLElement;
   private healthStatus!: HTMLElement;
+  private shieldNum!: HTMLElement;
+  private shieldFill!: HTMLElement;
+  private buffsBox!: HTMLElement;
+  private banner!: HTMLElement;
+  private bannerTimer = 0;
   private lowhp!: HTMLElement;
   private weaponName!: HTMLElement;
   private weaponAmmo!: HTMLElement;
   private toastTimer = 0;
   private playersEl: HTMLElement;
+  private waveEl!: HTMLElement;
+  private bossBar!: HTMLElement;
+  private bossFill!: HTMLElement;
   private pingEl: HTMLElement;
   private killfeed: HTMLElement;
   private scoreboard: HTMLElement;
@@ -43,6 +51,10 @@ export class Hud {
   private hitmarker: HTMLElement;
   private toast: HTMLElement;
   private pauseHint: HTMLElement;
+  private podium!: HTMLElement;
+  private podiumTitle!: HTMLElement;
+  private podiumTable!: HTMLElement;
+  private podiumCount!: HTMLElement;
   private hitmarkerTimer = 0;
   private vignetteTimer = 0;
 
@@ -57,6 +69,10 @@ export class Hud {
     this.vignette = el("div", "vignette", this.hud);
 
     this.healthPanel = el("div", "health-panel", this.hud);
+    const shieldRow = el("div", "shield-row", this.healthPanel);
+    this.shieldNum = el("span", "shield-num", shieldRow);
+    const shieldBar = el("div", "shield-bar", shieldRow);
+    this.shieldFill = el("div", "", shieldBar);
     const labelRow = el("div", "health-label", this.healthPanel);
     labelRow.textContent = "INTEGRITY";
     this.healthStatus = el("span", "health-status", labelRow);
@@ -65,6 +81,9 @@ export class Hud {
     const bar = el("div", "health-bar", healthRow);
     this.healthFill = el("div", "", bar);
 
+    this.buffsBox = el("div", "buffs", this.hud);
+    this.banner = el("div", "streak-banner", this.hud);
+
     const weaponPanel = el("div", "weapon-panel", this.hud);
     this.weaponName = el("div", "weapon-name", weaponPanel);
     this.weaponAmmo = el("div", "weapon-ammo", weaponPanel);
@@ -72,7 +91,13 @@ export class Hud {
 
     const topbar = el("div", "topbar", this.hud);
     this.playersEl = el("span", "", topbar);
+    this.waveEl = el("span", "wave-info", topbar);
     this.pingEl = el("span", "", topbar);
+
+    this.bossBar = el("div", "boss-bar", this.hud);
+    el("div", "boss-name", this.bossBar).textContent = "FOUNDRY WARDEN";
+    const bossTrack = el("div", "boss-track", this.bossBar);
+    this.bossFill = el("div", "", bossTrack);
 
     this.killfeed = el("div", "killfeed", this.hud);
 
@@ -99,6 +124,11 @@ export class Hud {
     this.toast = el("div", "toast", this.hud);
     this.pauseHint = el("div", "pause-hint", this.hud);
     this.pauseHint.textContent = "CLICK TO RESUME";
+
+    this.podium = el("div", "podium", this.hud);
+    this.podiumTitle = el("div", "podium-title", this.podium);
+    this.podiumTable = el("div", "podium-table", this.podium);
+    this.podiumCount = el("div", "podium-count", this.podium);
 
     el("div", "bottom-hint", this.hud).textContent =
       "WASD MOVE · SPACE JUMP · CLICK SHOOT · 1-4 WEAPONS · CTRL CYCLE · TAB SCORES · M MUSIC";
@@ -141,6 +171,20 @@ export class Hud {
     this.playersEl.append("OPERATIVES ", b, ` / ${MAX_PLAYERS}`);
   }
 
+  setWave(n: number, left: number, state: string): void {
+    if (n === 0) {
+      this.waveEl.textContent = "";
+      return;
+    }
+    this.waveEl.textContent =
+      state === "cleared" ? `WAVE ${n} CLEARED` : `WAVE ${n} · ${left} LEFT`;
+  }
+
+  setBoss(boss: { hp: number; mh: number } | null): void {
+    this.bossBar.classList.toggle("show", boss !== null);
+    if (boss) this.bossFill.style.width = `${Math.max(0, (boss.hp / boss.mh) * 100)}%`;
+  }
+
   setPing(ms: number): void {
     this.pingEl.textContent = "";
     const b = document.createElement("b");
@@ -160,11 +204,16 @@ export class Hud {
     this.vignetteTimer = window.setTimeout(() => this.vignette.classList.remove("show"), 120);
   }
 
-  addKill(killer: PlayerScore | undefined, victim: PlayerScore | undefined): void {
+  addKill(killer: PlayerScore | string | undefined, victim: PlayerScore | undefined): void {
     const entry = el("div", "entry");
     const k = document.createElement("span");
-    k.textContent = killer?.name ?? "???";
-    k.style.color = killer ? colorOf(killer.color) : "#888";
+    if (typeof killer === "string") {
+      k.textContent = killer;
+      k.style.color = "#ff7722";
+    } else {
+      k.textContent = killer?.name ?? "???";
+      k.style.color = killer ? colorOf(killer.color) : "#888";
+    }
     const skull = document.createElement("span");
     skull.className = "skull";
     skull.textContent = "⚔";
@@ -225,10 +274,67 @@ export class Hud {
     this.deathScreen.classList.remove("show");
   }
 
+  setShield(s: number): void {
+    const clamped = Math.max(0, Math.round(s));
+    this.shieldNum.textContent = String(clamped);
+    this.shieldFill.style.width = `${Math.min(100, (clamped / MAX_SHIELD) * 100)}%`;
+    this.shieldFill.classList.toggle("over", clamped > MAX_SHIELD);
+  }
+
+  /** Active buff chips, re-rendered cheaply each frame. */
+  updateBuffs(list: Array<{ label: string; sec: number }>): void {
+    if (list.length === 0 && this.buffsBox.childElementCount === 0) return;
+    this.buffsBox.textContent = "";
+    for (const b of list) {
+      const chip = document.createElement("div");
+      chip.className = "buff-chip";
+      chip.textContent = `${b.label} ${Math.ceil(b.sec)}`;
+      this.buffsBox.appendChild(chip);
+    }
+  }
+
+  /** Big centre-screen announcement (streaks, multi-kills). */
+  showBanner(text: string): void {
+    this.banner.textContent = text;
+    this.banner.classList.add("show");
+    window.clearTimeout(this.bannerTimer);
+    this.bannerTimer = window.setTimeout(() => this.banner.classList.remove("show"), 1800);
+  }
+
   setWeapon(w: WeaponId, ammo: number | null): void {
     this.weaponName.textContent = WEAPONS[w].name.toUpperCase();
     this.weaponAmmo.textContent = ammo === null ? "HITSCAN · ∞" : `AMMO · ${ammo}`;
     this.weaponAmmo.style.color = ammo !== null && ammo <= 2 ? "#ff5533" : "";
+  }
+
+  showPodium(title: string, roster: PlayerScore[], myId: string): void {
+    this.podiumTitle.textContent = title;
+    this.podiumTable.textContent = "";
+    const sorted = [...roster].sort((a, b) => b.kills - a.kills || a.deaths - b.deaths);
+    const medals = ["①", "②", "③"];
+    sorted.forEach((p, i) => {
+      const row = document.createElement("div");
+      row.className = `podium-row${p.id === myId ? " me" : ""}${i === 0 ? " first" : ""}`;
+      const rank = document.createElement("span");
+      rank.textContent = medals[i] ?? ` ${i + 1}`;
+      const name = document.createElement("span");
+      name.textContent = p.name;
+      name.style.color = colorOf(p.color);
+      name.className = "podium-name";
+      const score = document.createElement("span");
+      score.textContent = `${p.kills} / ${p.deaths}`;
+      row.append(rank, name, score);
+      this.podiumTable.appendChild(row);
+    });
+    this.podium.classList.add("show");
+  }
+
+  updatePodiumCountdown(sec: number): void {
+    this.podiumCount.textContent = `next match in ${Math.ceil(sec)}s`;
+  }
+
+  hidePodium(): void {
+    this.podium.classList.remove("show");
   }
 
   showToast(text: string): void {

@@ -150,6 +150,59 @@ body,
   box-shadow: none;
 }
 
+.overlay .mode-row {
+  display: flex;
+  gap: 12px;
+}
+
+.overlay .practice.horde {
+  color: #ff5533;
+  border-color: rgba(255, 85, 51, 0.5);
+}
+
+.overlay .practice.horde:hover {
+  box-shadow: 0 0 18px rgba(255, 85, 51, 0.4);
+}
+
+.wave-info {
+  color: #ff8855;
+}
+
+.boss-bar {
+  position: absolute;
+  top: 58px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 380px;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.boss-bar.show {
+  display: flex;
+}
+
+.boss-name {
+  font-size: 11px;
+  letter-spacing: 0.3em;
+  color: #ff5533;
+  text-align: center;
+  text-shadow: 0 0 8px #000;
+}
+
+.boss-track {
+  height: 7px;
+  background: rgba(20, 8, 6, 0.8);
+  border: 1px solid #3a1410;
+}
+
+.boss-track > div {
+  height: 100%;
+  background: linear-gradient(90deg, #7a1505, #ff5533);
+  transition: width 0.2s ease-out;
+}
+
 .overlay .music-toggle {
   position: absolute;
   bottom: 22px;
@@ -323,6 +376,78 @@ body,
   50% {
     border-left-color: #5a0a02;
   }
+}
+
+.shield-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.shield-num {
+  font-size: 15px;
+  font-weight: 700;
+  color: #58c8ff;
+  min-width: 30px;
+}
+
+.shield-bar {
+  flex: 1;
+  height: 5px;
+  background: #14202b;
+  overflow: hidden;
+}
+
+.shield-bar > div {
+  height: 100%;
+  background: linear-gradient(90deg, #2a7ec2, #58c8ff);
+  transition: width 0.15s ease-out;
+}
+
+.shield-bar > div.over {
+  background: linear-gradient(90deg, #c2962a, #ffd24a);
+}
+
+.buffs {
+  position: absolute;
+  top: 64px;
+  left: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.buff-chip {
+  background: var(--panel);
+  border: 1px solid #2a3340;
+  border-left: 3px solid var(--accent2);
+  padding: 6px 12px;
+  font-size: 12px;
+  letter-spacing: 0.15em;
+  color: #e8edf2;
+}
+
+.streak-banner {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%) scale(0.8);
+  font-size: 46px;
+  font-weight: 900;
+  letter-spacing: 0.3em;
+  color: #ffd24a;
+  text-shadow:
+    0 0 24px rgba(255, 160, 30, 0.8),
+    0 2px 6px #000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+
+.streak-banner.show {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
 }
 
 .health-label {
@@ -583,6 +708,69 @@ body,
 }
 
 .death-count {
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  color: #6d7c8c;
+}
+
+/* ---------- Match podium ---------- */
+
+.podium {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--panel);
+  border: 1px solid #2a3340;
+  border-top: 3px solid #ffd24a;
+  padding: 26px 38px;
+  min-width: 460px;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.podium.show {
+  display: flex;
+}
+
+.podium-title {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 0.22em;
+  color: #ffd24a;
+  text-shadow: 0 0 22px rgba(255, 200, 60, 0.5);
+}
+
+.podium-table {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.podium-row {
+  display: flex;
+  gap: 14px;
+  padding: 7px 12px;
+  font-size: 14px;
+  border-bottom: 1px solid #161c24;
+}
+
+.podium-row.first {
+  background: rgba(255, 210, 74, 0.08);
+}
+
+.podium-row.me {
+  outline: 1px solid rgba(255, 106, 34, 0.4);
+}
+
+.podium-row .podium-name {
+  flex: 1;
+}
+
+.podium-count {
   font-size: 13px;
   letter-spacing: 0.2em;
   color: #6d7c8c;
