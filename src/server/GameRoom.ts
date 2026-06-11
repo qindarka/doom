@@ -116,6 +116,8 @@ import {
 } from "./bots";
 import {
   DRONE_BOLT_COOLDOWN_MS,
+  EARLY_WAVE_LIMIT,
+  EARLY_WAVE_MERCY,
   FIEND_MELEE_COOLDOWN_MS,
   FIEND_MELEE_DMG,
   FIEND_MELEE_RANGE,
@@ -1264,8 +1266,8 @@ export class GameRoom extends DurableObject<Env> {
       kind,
       pos: vec3(vent.x, y, vent.z),
       yaw: 0,
-      hp: kind === "warden" ? wardenHp(this.waveN) : def.hp,
-      maxHp: kind === "warden" ? wardenHp(this.waveN) : def.hp,
+      hp: kind === "warden" ? this.scaledWardenHp() : def.hp,
+      maxHp: kind === "warden" ? this.scaledWardenHp() : def.hp,
       targetId: null,
       retargetAt: 0,
       path: [],
@@ -1276,6 +1278,16 @@ export class GameRoom extends DurableObject<Env> {
       slamPos: null,
       nextFragAt: now + 4000,
     });
+  }
+
+  private scaledWardenHp(): number {
+    const humans = [...this.players.values()].filter((p) => p.ws !== null).length;
+    return wardenHp(this.waveN, humans);
+  }
+
+  /** Monster damage, softened on the learning waves. */
+  private monsterDmg(base: number): number {
+    return Math.max(1, Math.round(base * (this.waveN <= EARLY_WAVE_LIMIT ? EARLY_WAVE_MERCY : 1)));
   }
 
   private spawnBolt(m: Monster, target: Player, now: number): void {
@@ -1290,12 +1302,12 @@ export class GameRoom extends DurableObject<Env> {
       id: this.nadeSeq++,
       by: "m:drone",
       k: "b",
-      dmg: 14,
+      dmg: this.monsterDmg(10),
       radius: 1.5,
       gravity: false,
       impact: true,
       pos: origin,
-      vel: vec3(aim.x * 13, aim.y * 13, aim.z * 13),
+      vel: vec3(aim.x * 11, aim.y * 11, aim.z * 11),
       explodeAt: now + 3000,
       bornAt: now,
     });
@@ -1322,7 +1334,7 @@ export class GameRoom extends DurableObject<Env> {
           if (d > 0.01 && rayAABBs(vec3(at.x, at.y + 0.5, at.z), dir, this.solidsNow(now), d - 0.05) !== null) {
             continue;
           }
-          this.applyDamage(p, null, Math.round(WARDEN_SLAM_DMG * (1 - (d / WARDEN_SLAM_RADIUS) * 0.5)), "m:warden", now);
+          this.applyDamage(p, null, this.monsterDmg(WARDEN_SLAM_DMG * (1 - (d / WARDEN_SLAM_RADIUS) * 0.5)), "m:warden", now);
         }
       }
 
@@ -1411,7 +1423,7 @@ export class GameRoom extends DurableObject<Env> {
           now >= m.nextAttackAt
         ) {
           m.nextAttackAt = now + FIEND_MELEE_COOLDOWN_MS;
-          this.applyDamage(target, null, FIEND_MELEE_DMG, "m:fiend", now);
+          this.applyDamage(target, null, this.monsterDmg(FIEND_MELEE_DMG), "m:fiend", now);
         }
       } else if (m.kind === "warden") {
         if (m.slamAt === 0 && dist < WARDEN_SLAM_RADIUS + 0.5 && now >= m.nextAttackAt) {
@@ -1437,7 +1449,7 @@ export class GameRoom extends DurableObject<Env> {
             id: this.nadeSeq++,
             by: "m:warden",
             k: "f",
-            dmg: 60,
+            dmg: this.monsterDmg(60),
             radius: 5,
             gravity: true,
             impact: false,
@@ -1547,6 +1559,13 @@ export class GameRoom extends DurableObject<Env> {
       for (const p of this.players.values()) {
         if (p.dead && p.respawnAt === null) p.respawnAt = now; // next tick revives
       }
+      // Between-wave resupply: every pickup returns.
+      for (let i = 0; i < this.items.length; i++) {
+        if (!this.items[i].avail) {
+          this.items[i] = { avail: true, respawnAt: 0 };
+          this.broadcast({ type: "item", id: ITEM_SPAWNS[i].id, avail: true });
+        }
+      }
     }
     if (!this.waveActive && this.waveN > 0 && now >= this.nextWaveAt) {
       this.startWave(this.waveN + 1, now);
@@ -1556,7 +1575,8 @@ export class GameRoom extends DurableObject<Env> {
   private startWave(n: number, now: number): void {
     this.waveN = n;
     this.waveActive = true;
-    this.spawnQueue = waveQueue(n);
+    const humans = [...this.players.values()].filter((p) => p.ws !== null).length;
+    this.spawnQueue = waveQueue(n, humans);
     this.nextSpawnAt = now + 1500;
     this.broadcast({ type: "wave", n, state: "incoming", left: this.spawnQueue.length });
   }
@@ -1581,7 +1601,7 @@ export class GameRoom extends DurableObject<Env> {
         // Medkits are only consumed when actually hurt.
         if (player.hp >= MAX_HEALTH) continue;
         slot.avail = false;
-        slot.respawnAt = now + (spawn.respawnMs ?? ITEM_RESPAWN_MS);
+        slot.respawnAt = now + (spawn.respawnMs ?? (this.isHorde ? 12_000 : ITEM_RESPAWN_MS));
         player.hp = Math.min(MAX_HEALTH, player.hp + HEALTH_PACK_HP);
         this.broadcast({ type: "item", id: spawn.id, avail: false });
         this.send(player.ws, { type: "heal", hp: player.hp });
@@ -1590,7 +1610,7 @@ export class GameRoom extends DurableObject<Env> {
 
       if (spawn.kind === "overdrive" || spawn.kind === "boots" || spawn.kind === "overshield") {
         slot.avail = false;
-        slot.respawnAt = now + (spawn.respawnMs ?? ITEM_RESPAWN_MS);
+        slot.respawnAt = now + (spawn.respawnMs ?? (this.isHorde ? 12_000 : ITEM_RESPAWN_MS));
         if (spawn.kind === "overdrive") {
           player.odUntil = now + OVERDRIVE_MS;
           this.send(player.ws, { type: "buff", k: "overdrive", ms: OVERDRIVE_MS });
@@ -1607,7 +1627,7 @@ export class GameRoom extends DurableObject<Env> {
 
       const weapon = spawn.weapon ?? DEFAULT_WEAPON;
       slot.avail = false;
-      slot.respawnAt = now + (spawn.respawnMs ?? ITEM_RESPAWN_MS);
+      slot.respawnAt = now + (spawn.respawnMs ?? (this.isHorde ? 12_000 : ITEM_RESPAWN_MS));
       const def = WEAPONS[weapon];
       player.ammo[weapon] = def.ammo ?? 0;
       player.weapon = weapon;
@@ -1911,8 +1931,10 @@ export class GameRoom extends DurableObject<Env> {
     // Shield regeneration + lava damage.
     for (const p of [...this.players.values()]) {
       if (p.dead) continue;
-      if (p.shield < MAX_SHIELD && now - p.lastDamagedAt >= SHIELD_REGEN_DELAY_MS) {
-        p.shield = Math.min(MAX_SHIELD, p.shield + (SHIELD_REGEN_PER_S * TICK_MS) / 1000);
+      const regenDelay = this.isHorde ? 3500 : SHIELD_REGEN_DELAY_MS;
+      const regenRate = this.isHorde ? SHIELD_REGEN_PER_S * 1.5 : SHIELD_REGEN_PER_S;
+      if (p.shield < MAX_SHIELD && now - p.lastDamagedAt >= regenDelay) {
+        p.shield = Math.min(MAX_SHIELD, p.shield + (regenRate * TICK_MS) / 1000);
       }
       if (inHazard(p.pos.x, p.pos.y, p.pos.z)) {
         p.lavaAcc += TICK_MS;

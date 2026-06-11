@@ -14,16 +14,16 @@ export interface MonsterDef {
 }
 
 export const MONSTER_DEFS: Record<MonsterKind, MonsterDef> = {
-  fiend: { hp: 60, speed: 7.5, halfW: 0.5, height: 1.0 },
+  fiend: { hp: 50, speed: 6.5, halfW: 0.5, height: 1.0 },
   drone: { hp: 40, speed: 4.2, halfW: 0.35, height: 0.7, altitude: 2.4 },
-  warden: { hp: 1100, speed: 3.2, halfW: 0.8, height: 2.6 },
+  warden: { hp: 800, speed: 3.2, halfW: 0.8, height: 2.6 },
 };
 
-export const FIEND_MELEE_DMG = 15;
+export const FIEND_MELEE_DMG = 10;
 export const FIEND_MELEE_RANGE = 1.6;
-export const FIEND_MELEE_COOLDOWN_MS = 900;
-export const DRONE_BOLT_COOLDOWN_MS = 2600;
-export const WARDEN_SLAM_DMG = 60;
+export const FIEND_MELEE_COOLDOWN_MS = 1100;
+export const DRONE_BOLT_COOLDOWN_MS = 3200;
+export const WARDEN_SLAM_DMG = 45;
 export const WARDEN_SLAM_RADIUS = 5;
 export const WARDEN_TELEGRAPH_MS = 1200;
 export const WARDEN_SLAM_COOLDOWN_MS = 4500;
@@ -38,26 +38,43 @@ export const VENTS: Array<{ x: number; z: number }> = [
 ];
 
 export const WAVE_SPAWN_STAGGER_MS = 1200;
-export const WAVE_INTERMISSION_MS = 8000;
+export const WAVE_INTERMISSION_MS = 10_000;
 export const HORDE_GAMEOVER_MS = 12_000;
 
-/** Wave composition: every 5th wave brings the Foundry Warden. */
-export function waveQueue(n: number): MonsterKind[] {
+/** Squad scaling: solo gets 1.0x monsters, each extra human adds 30%. */
+export function squadMult(humans: number): number {
+  return 0.7 + 0.3 * Math.min(4, Math.max(1, humans));
+}
+
+/** Early waves pull their punches so new players can learn the dance. */
+export const EARLY_WAVE_MERCY = 0.7;
+export const EARLY_WAVE_LIMIT = 2;
+
+/**
+ * Wave composition, scaled to the number of humans present. Every 5th wave
+ * brings the Foundry Warden. Solo: wave 1 = 2 fiends, drones from wave 3.
+ */
+export function waveQueue(n: number, humans: number): MonsterKind[] {
+  const mult = squadMult(humans);
   const queue: MonsterKind[] = [];
   if (n % 5 === 0) {
     queue.push("warden");
-    for (let i = 0; i < Math.min(10, 2 + n / 2); i++) queue.push("fiend");
-    for (let i = 0; i < Math.min(6, n / 2); i++) queue.push("drone");
+    const fiends = Math.min(10, Math.ceil((1 + n * 0.4) * mult));
+    const drones = Math.min(6, Math.ceil((n / 5) * mult));
+    for (let i = 0; i < fiends; i++) queue.push("fiend");
+    for (let i = 0; i < drones; i++) queue.push("drone");
   } else {
-    for (let i = 0; i < Math.min(16, 3 + n * 2); i++) queue.push("fiend");
-    for (let i = 0; i < Math.min(8, n - 1); i++) queue.push("drone");
+    const fiends = Math.min(16, Math.ceil((1 + n * 0.8) * mult));
+    const drones = n >= 3 ? Math.min(8, Math.ceil((n - 2) * 0.5 * mult)) : 0;
+    for (let i = 0; i < fiends; i++) queue.push("fiend");
+    for (let i = 0; i < drones; i++) queue.push("drone");
   }
   return queue;
 }
 
-/** Warden scales with how deep you've survived. */
-export function wardenHp(wave: number): number {
-  return MONSTER_DEFS.warden.hp + (wave / 5 - 1) * 400;
+/** Warden scales with depth and squad size. */
+export function wardenHp(wave: number, humans: number): number {
+  return Math.round((MONSTER_DEFS.warden.hp + (wave / 5 - 1) * 350) * squadMult(humans));
 }
 
 export interface Monster {

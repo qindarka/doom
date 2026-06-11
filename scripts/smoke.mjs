@@ -442,6 +442,11 @@ async function main() {
       timeout: 8000,
     });
     ok(incoming.n === 1, `wave 1 announced (got wave ${incoming.n})`);
+    const [sized] = await hermit.waitFor(
+      (m) => m.type === "wave" && m.state === "incoming" && m.left > 0,
+      { timeout: 8000 },
+    );
+    ok(sized.left <= 3, `solo wave 1 is beginner-sized (${sized.left} monsters)`);
     const [withMonsters] = await hermit.waitFor(
       (m) => m.type === "state" && Array.isArray(m.m) && m.m.length > 0,
       { timeout: 12000 },
