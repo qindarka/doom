@@ -89,7 +89,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     pellets: 1,
     spread: 0,
     ammo: null,
-    color: 0xffc070,
+    color: 0xffd089,
   },
   scrapshot: {
     name: "Scrapshot",
@@ -99,7 +99,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     pellets: 7,
     spread: 0.085,
     ammo: 8,
-    color: 0xffa030,
+    color: 0xffc060,
   },
   arcwelder: {
     name: "Arcwelder",
@@ -109,7 +109,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     pellets: 1,
     spread: 0,
     ammo: 5,
-    color: 0x33ffd0,
+    color: 0xf2efe0,
   },
   frag: {
     name: "Frag Charge",
@@ -119,7 +119,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     pellets: 1,
     spread: 0,
     ammo: 3,
-    color: 0xff4455,
+    color: 0xcc5533,
     projectile: { speed: 17, fuseMs: 2000, radius: 6, gravity: true, impact: false },
   },
   lance: {
@@ -130,7 +130,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     pellets: 1,
     spread: 0,
     ammo: 4,
-    color: 0xff7722,
+    color: 0xff8844,
     projectile: { speed: 28, fuseMs: 6000, radius: 5, gravity: false, impact: true },
   },
   smelter: {
@@ -141,7 +141,7 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
     pellets: 1,
     spread: 0,
     ammo: 2,
-    color: 0xffffff,
+    color: 0xfff0d0,
   },
 };
 

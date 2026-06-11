@@ -9,7 +9,6 @@ import {
   DEFAULT_WEAPON,
   INTERP_DELAY_MS,
   PLAYER_HEIGHT,
-  WEAPONS,
 } from "../shared/constants";
 import type { WeaponId } from "../shared/constants";
 import type { PlayerScore, PlayerSnapshot } from "../shared/protocol";
@@ -59,20 +58,32 @@ class RemoteAvatar {
     this.builtName = score.name;
     this.builtColor = score.color;
 
-    // Original armored-trooper design: dark undersuit with color-coded armor
-    // plates, a full helmet and a glowing amber visor. Feet sit at the group
-    // origin; total height matches PLAYER_HEIGHT.
-    const armor = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(score.color).multiplyScalar(0.85),
-      roughness: 0.45,
-      metalness: 0.55,
+    // Grounded soldier design: olive fatigues, tan plate vest, covered helmet.
+    // The player's color appears only where a real kit would carry markings —
+    // helmet band, shoulder patch — plus the floating name tag.
+    const fatigues = new THREE.MeshStandardMaterial({
+      color: 0x4a4f38,
+      roughness: 0.9,
+      metalness: 0.02,
     });
-    const suit = new THREE.MeshStandardMaterial({
-      color: 0x1c2128,
+    const gear = new THREE.MeshStandardMaterial({
+      color: 0x6b6149,
+      roughness: 0.85,
+      metalness: 0.05,
+    });
+    const darkKit = new THREE.MeshStandardMaterial({
+      color: 0x26282a,
       roughness: 0.7,
-      metalness: 0.35,
+      metalness: 0.15,
     });
-    const visorMat = new THREE.MeshBasicMaterial({ color: 0xffb649 });
+    const marking = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(score.color),
+      roughness: 0.7,
+      metalness: 0.05,
+    });
+    // keep the old local names so the assembly below reads unchanged
+    const suit = fatigues;
+    const visorMat = darkKit;
 
     const addBox = (
       parent: THREE.Object3D,
@@ -94,54 +105,57 @@ class RemoteAvatar {
     // Legs pivot at the hips so they can swing while walking.
     this.legL = new THREE.Group();
     this.legL.position.set(-0.15, 0.92, 0);
-    addBox(this.legL, armor, 0.2, 0.42, 0.24, 0, -0.21, 0); // thigh plate
+    addBox(this.legL, suit, 0.2, 0.42, 0.24, 0, -0.21, 0); // trouser thigh
     addBox(this.legL, suit, 0.16, 0.42, 0.18, 0, -0.62, 0); // shin
-    addBox(this.legL, armor, 0.18, 0.12, 0.3, 0, -0.86, -0.03); // boot
+    addBox(this.legL, darkKit, 0.18, 0.14, 0.3, 0, -0.85, -0.03); // boot
     this.group.add(this.legL);
     this.legR = new THREE.Group();
     this.legR.position.set(0.15, 0.92, 0);
-    addBox(this.legR, armor, 0.2, 0.42, 0.24, 0, -0.21, 0);
+    addBox(this.legR, suit, 0.2, 0.42, 0.24, 0, -0.21, 0);
     addBox(this.legR, suit, 0.16, 0.42, 0.18, 0, -0.62, 0);
-    addBox(this.legR, armor, 0.18, 0.12, 0.3, 0, -0.86, -0.03);
+    addBox(this.legR, darkKit, 0.18, 0.14, 0.3, 0, -0.85, -0.03);
     this.group.add(this.legR);
 
-    // Torso: undersuit core, sculpted chest plate, belt, back unit.
+    // Torso: fatigue shirt under a tan plate carrier, belt, field pack.
     addBox(this.group, suit, 0.42, 0.5, 0.26, 0, 1.18, 0);
-    addBox(this.group, armor, 0.46, 0.34, 0.3, 0, 1.27, -0.01); // chest plate
-    addBox(this.group, armor, 0.36, 0.1, 0.26, 0, 0.97, 0); // belt
-    addBox(this.group, suit, 0.3, 0.34, 0.14, 0, 1.25, 0.2); // back unit
-    addBox(this.group, visorMat, 0.1, 0.04, 0.02, 0, 1.36, -0.155); // chest lamp
+    addBox(this.group, gear, 0.44, 0.36, 0.3, 0, 1.25, -0.01); // plate carrier
+    addBox(this.group, darkKit, 0.14, 0.12, 0.06, -0.12, 1.32, -0.16); // chest pouch
+    addBox(this.group, darkKit, 0.14, 0.12, 0.06, 0.12, 1.32, -0.16); // chest pouch
+    addBox(this.group, darkKit, 0.36, 0.1, 0.26, 0, 0.97, 0); // belt
+    addBox(this.group, gear, 0.3, 0.34, 0.16, 0, 1.25, 0.2); // field pack
 
-    // Pauldrons.
-    addBox(this.group, armor, 0.18, 0.16, 0.26, -0.3, 1.42, 0);
-    addBox(this.group, armor, 0.18, 0.16, 0.26, 0.3, 1.42, 0);
+    // Shoulders: fatigue rolls, with the squad-color patch on the left.
+    addBox(this.group, suit, 0.18, 0.16, 0.26, -0.3, 1.42, 0);
+    addBox(this.group, suit, 0.18, 0.16, 0.26, 0.3, 1.42, 0);
+    addBox(this.group, marking, 0.04, 0.1, 0.12, -0.4, 1.42, 0); // shoulder patch
 
     // Arms: the right one is posed onto the gun; the left swings while walking.
     this.armL = new THREE.Group();
     this.armL.position.set(-0.31, 1.4, 0);
     addBox(this.armL, suit, 0.12, 0.34, 0.14, 0, -0.18, 0);
-    addBox(this.armL, armor, 0.13, 0.2, 0.15, 0, -0.43, 0); // forearm guard
+    addBox(this.armL, darkKit, 0.13, 0.18, 0.15, 0, -0.44, 0); // glove
     this.group.add(this.armL);
     const armR = new THREE.Group();
     armR.position.set(0.31, 1.4, 0);
     armR.rotation.x = -0.9;
     addBox(armR, suit, 0.12, 0.34, 0.14, 0, -0.18, 0);
-    addBox(armR, armor, 0.13, 0.2, 0.15, 0, -0.43, 0);
+    addBox(armR, darkKit, 0.13, 0.18, 0.15, 0, -0.44, 0);
     this.group.add(armR);
 
-    // Helmet: rounded dome over a jaw guard, wide glowing visor, side fins.
+    // Head: cloth-covered helmet, dark goggles, balaclava, squad-color band.
     this.head = new THREE.Group();
-    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 12), armor);
-    dome.scale.set(1, 0.92, 1.08);
-    dome.position.y = 0.06;
+    const dome = new THREE.Mesh(new THREE.SphereGeometry(0.17, 14, 12), fatigues);
+    dome.scale.set(1, 0.9, 1.08);
+    dome.position.y = 0.07;
     dome.castShadow = true;
     this.head.add(dome);
-    addBox(this.head, suit, 0.24, 0.14, 0.26, 0, -0.05, 0.01); // jaw guard
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.09, 0.06), visorMat);
-    visor.position.set(0, 0.04, -0.15);
-    this.head.add(visor);
-    addBox(this.head, armor, 0.05, 0.08, 0.16, -0.17, 0.02, 0.02); // ear fins
-    addBox(this.head, armor, 0.05, 0.08, 0.16, 0.17, 0.02, 0.02);
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.175, 0.175, 0.05, 14), marking);
+    band.position.y = 0.05;
+    this.head.add(band); // squad-color helmet band
+    addBox(this.head, darkKit, 0.26, 0.12, 0.26, 0, -0.06, 0.01); // balaclava jaw
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.06), visorMat);
+    visor.position.set(0, 0.03, -0.16);
+    this.head.add(visor); // goggles
     this.head.position.y = PLAYER_HEIGHT - 0.2;
     this.group.add(this.head);
 
@@ -181,27 +195,29 @@ class RemoteAvatar {
         (child.material as THREE.Material).dispose();
       }
     }
-    const dark = new THREE.MeshStandardMaterial({ color: 0x14181d, roughness: 0.4, metalness: 0.7 });
+    const dark = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.5, metalness: 0.6 });
+    const wood = new THREE.MeshStandardMaterial({ color: 0x5b4630, roughness: 0.75, metalness: 0.05 });
     if (w === "scrapshot") {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.15, 0.5), dark);
-      this.gun.add(body);
-      const band = new THREE.Mesh(
-        new THREE.BoxGeometry(0.16, 0.1, 0.07),
-        new THREE.MeshBasicMaterial({ color: WEAPONS.scrapshot.color }),
-      );
-      band.position.set(0, 0, -0.26);
-      this.gun.add(band);
+      this.gun.add(new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.11, 0.62), dark));
+      const pump = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.16), wood);
+      pump.position.set(0, -0.04, -0.2);
+      this.gun.add(pump);
     } else if (w === "arcwelder") {
-      const body = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.1, 0.75), dark);
-      this.gun.add(body);
-      const coil = new THREE.Mesh(
-        new THREE.TorusGeometry(0.07, 0.016, 6, 12),
-        new THREE.MeshBasicMaterial({ color: WEAPONS.arcwelder.color }),
-      );
-      coil.position.set(0, 0, -0.3);
-      this.gun.add(coil);
+      this.gun.add(new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.1, 0.8), dark));
+      const scope = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.18, 8), dark);
+      scope.rotation.x = Math.PI / 2;
+      scope.position.set(0, 0.09, -0.05);
+      this.gun.add(scope);
+    } else if (w === "lance" || w === "smelter") {
+      const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.65, 10), dark);
+      tube.rotation.x = Math.PI / 2;
+      tube.position.set(0, 0.02, -0.1);
+      this.gun.add(tube);
     } else {
-      this.gun.add(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.12, 0.55), dark));
+      this.gun.add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.11, 0.5), dark));
+      const mag = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.13, 0.08), dark);
+      mag.position.set(0, -0.11, -0.06);
+      this.gun.add(mag);
     }
   }
 

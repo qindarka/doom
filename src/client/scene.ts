@@ -17,7 +17,7 @@ import {
 } from "../shared/map";
 import type { AABB } from "../shared/map";
 import type { PlayerScore } from "../shared/protocol";
-import { crateTexture, floorTexture, monolithTexture, wallTexture } from "./textures";
+import { crateTexture, floorTexture, monolithTexture, steelTexture, wallTexture } from "./textures";
 
 /** The live scoreboard screen drawn onto the jumbotron slab. */
 export class ScreenBoard {
@@ -41,7 +41,7 @@ export class ScreenBoard {
   update(roster: PlayerScore[], feedLine: string | null): void {
     if (feedLine) this.feedLine = feedLine.toUpperCase();
     const c = this.ctx;
-    c.fillStyle = "#021410";
+    c.fillStyle = "#171411";
     c.fillRect(0, 0, 512, 256);
 
     // scanlines
@@ -49,10 +49,10 @@ export class ScreenBoard {
     for (let y = 0; y < 256; y += 4) c.fillRect(0, y, 512, 1);
 
     c.font = "900 30px 'Lucida Console', Monaco, monospace";
-    c.fillStyle = "#33ffd0";
+    c.fillStyle = "#ffb536";
     c.textAlign = "center";
     c.fillText("FERROFRAG", 256, 38);
-    c.strokeStyle = "rgba(51,255,208,0.4)";
+    c.strokeStyle = "rgba(255,181,54,0.4)";
     c.lineWidth = 2;
     c.beginPath();
     c.moveTo(40, 52);
@@ -66,19 +66,19 @@ export class ScreenBoard {
       c.fillStyle = `#${p.color.toString(16).padStart(6, "0")}`;
       c.textAlign = "left";
       c.fillText(p.name.slice(0, 12), 56, y);
-      c.fillStyle = "#bfe8dd";
+      c.fillStyle = "#e8ddc8";
       c.textAlign = "right";
       c.fillText(`${p.kills} / ${p.deaths}`, 456, y);
       y += 30;
     }
     if (sorted.length === 0) {
-      c.fillStyle = "#1c7a64";
+      c.fillStyle = "#8a7240";
       c.textAlign = "center";
       c.fillText("AWAITING OPERATIVES", 256, 130);
     }
 
     c.font = "700 18px 'Lucida Console', Monaco, monospace";
-    c.fillStyle = "#ff8844";
+    c.fillStyle = "#ff9c3f";
     c.textAlign = "center";
     c.fillText(this.feedLine.slice(0, 40), 256, 240);
 
@@ -128,8 +128,8 @@ export function buildScene(): {
   tick: (now: number, dt: number) => void;
 } {
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0a0708);
-  scene.fog = new THREE.FogExp2(0x0a0708, 0.014);
+  scene.background = new THREE.Color(0x9a917e);
+  scene.fog = new THREE.FogExp2(0x9a917e, 0.011);
   const animations: Array<(now: number, dt: number) => void> = [];
 
   // --- Ember sky: a gradient dome (dark zenith, smouldering horizon) ----------
@@ -140,11 +140,10 @@ export function buildScene(): {
     const c = skyCanvas.getContext("2d");
     if (c) {
       const grad = c.createLinearGradient(0, 0, 0, 128);
-      grad.addColorStop(0, "#050507");
-      grad.addColorStop(0.62, "#0c0708");
-      grad.addColorStop(0.82, "#2a0d06");
-      grad.addColorStop(0.95, "#571f08");
-      grad.addColorStop(1, "#6b2a0a");
+      grad.addColorStop(0, "#6e7b88");
+      grad.addColorStop(0.55, "#948e80");
+      grad.addColorStop(0.85, "#b3a587");
+      grad.addColorStop(1, "#c0ad8a");
       c.fillStyle = grad;
       c.fillRect(0, 0, 4, 128);
     }
@@ -170,7 +169,7 @@ export function buildScene(): {
     geo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     const ash = new THREE.Points(
       geo,
-      new THREE.PointsMaterial({ color: 0x8a7a6a, size: 0.07, transparent: true, opacity: 0.7 }),
+      new THREE.PointsMaterial({ color: 0xcfc4ad, size: 0.06, transparent: true, opacity: 0.5 }),
     );
     scene.add(ash);
     animations.push((now, dt) => {
@@ -247,7 +246,7 @@ export function buildScene(): {
   for (const pad of TELEPORTERS) {
     const ring = new THREE.Mesh(
       new THREE.RingGeometry(0.55, 0.95, 28),
-      new THREE.MeshBasicMaterial({ color: 0x9966ff, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+      new THREE.MeshBasicMaterial({ color: 0xd9a441, transparent: true, opacity: 0.7, side: THREE.DoubleSide }),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.set(pad.pos.x, 0.03, pad.pos.z);
@@ -255,16 +254,16 @@ export function buildScene(): {
     const beam = new THREE.Mesh(
       new THREE.CylinderGeometry(0.55, 0.75, 4.5, 16, 1, true),
       new THREE.MeshBasicMaterial({
-        color: 0x9966ff,
+        color: 0xd9a441,
         transparent: true,
-        opacity: 0.16,
+        opacity: 0.1,
         side: THREE.DoubleSide,
         depthWrite: false,
       }),
     );
     beam.position.set(pad.pos.x, 2.25, pad.pos.z);
     scene.add(beam);
-    const light = new THREE.PointLight(0x9966ff, 14, 9, 1.8);
+    const light = new THREE.PointLight(0xd9a441, 8, 8, 1.8);
     light.position.set(pad.pos.x, 1.4, pad.pos.z);
     scene.add(light);
     animations.push((now) => {
@@ -281,7 +280,7 @@ export function buildScene(): {
     );
     plate.position.set(pad.pos.x, 0.05, pad.pos.z);
     scene.add(plate);
-    const chevMat = new THREE.MeshBasicMaterial({ color: 0x00ffc8, transparent: true, opacity: 0.9 });
+    const chevMat = new THREE.MeshBasicMaterial({ color: 0xe6c33c, transparent: true, opacity: 0.85 });
     const chev = new THREE.Mesh(new THREE.ConeGeometry(0.45, 0.5, 4), chevMat);
     chev.position.set(pad.pos.x, 0.45, pad.pos.z);
     scene.add(chev);
@@ -292,9 +291,9 @@ export function buildScene(): {
   }
 
   // --- Lighting -------------------------------------------------------------
-  scene.add(new THREE.HemisphereLight(0x2c3644, 0x0a0c0e, 0.7));
+  scene.add(new THREE.HemisphereLight(0xb8bcc2, 0x5e5648, 1.05));
 
-  const sun = new THREE.DirectionalLight(0xffe8cc, 1.1);
+  const sun = new THREE.DirectionalLight(0xfff0da, 2.4);
   sun.position.set(30, 42, 18);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -307,25 +306,12 @@ export function buildScene(): {
   sun.shadow.bias = -0.0004;
   scene.add(sun);
 
-  // Accent lights: alternating magma / teal around the arena.
-  const accents: Array<[number, number, number]> = [
-    [-18, -18, 0xff6a22],
-    [18, -18, 0x00ffc8],
-    [-18, 18, 0x00ffc8],
-    [18, 18, 0xff6a22],
-    [0, 0, 0xff8844],
-  ];
-  for (const [x, z, color] of accents) {
-    const light = new THREE.PointLight(color, 60, 30, 1.8);
-    light.position.set(x, x === 0 && z === 0 ? 7 : 4.5, z);
-    scene.add(light);
-  }
 
   // --- Floor ------------------------------------------------------------------
   const floorMat = new THREE.MeshStandardMaterial({
     map: floorTexture(ARENA_HALF),
-    roughness: 0.82,
-    metalness: 0.38,
+    roughness: 0.92,
+    metalness: 0.04,
   });
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA_HALF * 2, ARENA_HALF * 2), floorMat);
   floor.rotation.x = -Math.PI / 2;
@@ -335,15 +321,15 @@ export function buildScene(): {
   // --- Boundary walls ------------------------------------------------------------
   const wallMat = new THREE.MeshStandardMaterial({
     map: wallTexture(10, 1.5),
-    roughness: 0.75,
-    metalness: 0.3,
+    roughness: 0.9,
+    metalness: 0.05,
   });
   for (const wall of WALLS) {
     scene.add(boxMesh(wall, wallMat));
   }
 
   // Glowing trim along the top of each wall.
-  const trimMat = new THREE.MeshBasicMaterial({ color: 0xff6a22 });
+  const trimMat = new THREE.MeshStandardMaterial({ color: 0xb3942e, roughness: 0.7, metalness: 0.2 });
   for (const wall of WALLS) {
     const w = wall.max.x - wall.min.x;
     const d = wall.max.z - wall.min.z;
@@ -365,48 +351,46 @@ export function buildScene(): {
   // --- Obstacles ---------------------------------------------------------------
   const crateMat = new THREE.MeshStandardMaterial({
     map: crateTexture(),
-    color: 0xb9c2cc,
-    roughness: 0.7,
-    metalness: 0.45,
+    roughness: 0.8,
+    metalness: 0.15,
   });
   const lowCrateMat = new THREE.MeshStandardMaterial({
     map: crateTexture(),
-    color: 0xcc9a66,
-    roughness: 0.7,
-    metalness: 0.35,
+    color: 0xb9a684,
+    roughness: 0.85,
+    metalness: 0.1,
   });
   const pillarMat = new THREE.MeshStandardMaterial({
-    map: wallTexture(1.5, 4),
-    roughness: 0.72,
-    metalness: 0.4,
+    map: monolithTexture(1.5, 4),
+    roughness: 0.85,
+    metalness: 0.05,
   });
   const barrierMat = new THREE.MeshStandardMaterial({
-    map: wallTexture(4, 1),
-    color: 0xaab4bf,
-    roughness: 0.7,
-    metalness: 0.45,
+    map: monolithTexture(4, 1),
+    color: 0xc6c2b6,
+    roughness: 0.85,
+    metalness: 0.05,
   });
   const monoMat = new THREE.MeshStandardMaterial({
     map: monolithTexture(3, 1.5),
-    roughness: 0.6,
-    metalness: 0.55,
+    roughness: 0.85,
+    metalness: 0.05,
   });
   const stepMat = new THREE.MeshStandardMaterial({
     map: monolithTexture(1, 0.5),
-    color: 0xb9c4cf,
-    roughness: 0.65,
-    metalness: 0.5,
+    color: 0xb5b0a3,
+    roughness: 0.85,
+    metalness: 0.05,
   });
   const deckMat = new THREE.MeshStandardMaterial({
-    map: wallTexture(5, 0.5),
-    color: 0xc4ccd4,
+    map: steelTexture(5, 5),
     roughness: 0.6,
-    metalness: 0.55,
+    metalness: 0.6,
   });
   const counterMat = new THREE.MeshStandardMaterial({
-    map: monolithTexture(2, 0.5),
-    color: 0xd0b890,
-    roughness: 0.55,
+    map: steelTexture(4, 1),
+    color: 0x9a8f7c,
+    roughness: 0.6,
     metalness: 0.5,
   });
   const screenFrameMat = new THREE.MeshStandardMaterial({
@@ -461,13 +445,10 @@ export function buildScene(): {
     if (obstacle.kind === "monolith") {
       const cap = new THREE.Mesh(
         new THREE.BoxGeometry(w - 1, 0.1, d - 1),
-        new THREE.MeshBasicMaterial({ color: 0x00614c }),
+        new THREE.MeshStandardMaterial({ color: 0x6e6a5e, roughness: 0.9 }),
       );
       cap.position.set(cx, obstacle.max.y + 0.05, cz);
       scene.add(cap);
-      const glow = new THREE.PointLight(0x00ffc8, 26, 16, 1.8);
-      glow.position.set(cx, obstacle.max.y + 1.2, cz);
-      scene.add(glow);
     }
 
     // The jumbotron: live scoreboard faces on both sides of the screen slab.
@@ -480,7 +461,7 @@ export function buildScene(): {
       north.position.set(cx, obstacle.min.y + h / 2, obstacle.min.z - 0.02);
       north.rotation.y = Math.PI;
       scene.add(north);
-      const screenGlow = new THREE.PointLight(0x33ffd0, 18, 18, 1.8);
+      const screenGlow = new THREE.PointLight(0xffb536, 10, 16, 1.8);
       screenGlow.position.set(cx, obstacle.min.y - 0.5, cz);
       scene.add(screenGlow);
     }
@@ -501,15 +482,15 @@ export function buildScene(): {
 
   // --- Spawn pads -----------------------------------------------------------------
   const padMat = new THREE.MeshBasicMaterial({
-    color: 0x00ffc8,
+    color: 0xd8d2c2,
     transparent: true,
-    opacity: 0.18,
+    opacity: 0.1,
     side: THREE.DoubleSide,
   });
   const padRingMat = new THREE.MeshBasicMaterial({
-    color: 0x00ffc8,
+    color: 0xd8d2c2,
     transparent: true,
-    opacity: 0.45,
+    opacity: 0.3,
     side: THREE.DoubleSide,
   });
   for (const sp of SPAWN_POINTS) {

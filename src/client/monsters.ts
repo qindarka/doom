@@ -79,11 +79,11 @@ function buildBody(kind: MonsterSnapshot["k"]): THREE.Group {
     group.add(ring);
     const eyeGlow = new THREE.Mesh(
       new THREE.SphereGeometry(0.1, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0x33ddff }),
+      new THREE.MeshBasicMaterial({ color: 0xffb536 }),
     );
     eyeGlow.position.set(0, -0.05, -0.3);
     group.add(eyeGlow);
-    const light = new THREE.PointLight(0x33ddff, 5, 6, 2);
+    const light = new THREE.PointLight(0xffb536, 4, 6, 2);
     light.position.y = -0.3;
     group.add(light);
     return group;

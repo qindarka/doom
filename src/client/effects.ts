@@ -363,133 +363,95 @@ import type { WeaponId } from "../shared/constants";
 
 /** Builds the gun meshes for one weapon into `parent`; returns the muzzle z. */
 function buildGun(parent: THREE.Group, w: WeaponId): number {
-  const dark = new THREE.MeshStandardMaterial({ color: 0x1b2026, roughness: 0.45, metalness: 0.75 });
-  const accent = new THREE.MeshStandardMaterial({ color: 0x39424d, roughness: 0.5, metalness: 0.6 });
+  const gunmetal = new THREE.MeshStandardMaterial({ color: 0x23262b, roughness: 0.45, metalness: 0.7 });
+  const polymer = new THREE.MeshStandardMaterial({ color: 0x32332d, roughness: 0.8, metalness: 0.1 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x5b4630, roughness: 0.75, metalness: 0.05 });
+
+  const box = (mat: THREE.Material, wd: number, h: number, d: number, x: number, y: number, z: number): void => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(wd, h, d), mat);
+    m.position.set(x, y, z);
+    parent.add(m);
+  };
+  const cyl = (mat: THREE.Material, r: number, len: number, x: number, y: number, z: number): void => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 10), mat);
+    m.rotation.x = Math.PI / 2;
+    m.position.set(x, y, z);
+    parent.add(m);
+  };
 
   if (w === "scrapshot") {
-    // Sawn-off scrap cannon: twin fat barrels over a boxy receiver.
-    const glow = new THREE.MeshBasicMaterial({ color: 0xff8830 });
-    const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.16, 0.38), dark);
-    parent.add(receiver);
-    for (const dx of [-0.045, 0.045]) {
-      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.042, 0.05, 0.4, 10), accent);
-      barrel.rotation.x = Math.PI / 2;
-      barrel.position.set(dx, 0.05, -0.34);
-      parent.add(barrel);
-    }
-    const band = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.1, 0.06), glow);
-    band.position.set(0, 0.02, -0.42);
-    parent.add(band);
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.18, 0.1), accent);
-    grip.position.set(0, -0.15, 0.1);
-    grip.rotation.x = 0.32;
-    parent.add(grip);
-    return -0.56;
+    // Pump shotgun: long barrel over a tube magazine, wooden pump and stock.
+    box(gunmetal, 0.1, 0.13, 0.3, 0, 0, 0.02); // receiver
+    cyl(gunmetal, 0.028, 0.52, 0, 0.045, -0.34); // barrel
+    cyl(gunmetal, 0.022, 0.44, 0, -0.02, -0.3); // tube mag
+    box(wood, 0.09, 0.07, 0.16, 0, -0.02, -0.32); // pump
+    box(wood, 0.09, 0.13, 0.18, 0, -0.05, 0.2); // stock
+    box(gunmetal, 0.02, 0.03, 0.03, 0, 0.11, -0.55); // bead sight
+    return -0.62;
+  }
+
+  if (w === "arcwelder") {
+    // Marksman rifle: long slim barrel, boxy receiver, scope tube.
+    box(gunmetal, 0.09, 0.13, 0.4, 0, 0, 0.02); // receiver
+    cyl(gunmetal, 0.022, 0.62, 0, 0.03, -0.48); // barrel
+    cyl(gunmetal, 0.04, 0.2, 0, 0.13, -0.05); // scope
+    box(gunmetal, 0.02, 0.05, 0.02, 0, 0.09, -0.05); // scope mount
+    box(polymer, 0.08, 0.1, 0.22, 0, -0.03, -0.28); // forend
+    box(polymer, 0.08, 0.13, 0.2, 0, -0.06, 0.24); // stock
+    box(polymer, 0.08, 0.16, 0.09, 0, -0.13, 0.08); // grip
+    return -0.79;
+  }
+
+  if (w === "frag") {
+    // Frag grenade in a gloved hand: olive canister with a steel spoon.
+    const olive = new THREE.MeshStandardMaterial({ color: 0x44492f, roughness: 0.8, metalness: 0.1 });
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.16, 12), olive);
+    shell.position.set(0, -0.04, -0.18);
+    parent.add(shell);
+    const capMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.04, 8), gunmetal);
+    capMesh.position.set(0, 0.06, -0.18);
+    parent.add(capMesh);
+    box(gunmetal, 0.02, 0.1, 0.04, 0.05, 0.02, -0.18); // spoon lever
+    box(polymer, 0.1, 0.08, 0.14, 0, -0.14, -0.1); // glove knuckles
+    return -0.3;
   }
 
   if (w === "lance") {
-    // Shoulder-style rocket tube with a glowing muzzle ring.
-    const glow = new THREE.MeshBasicMaterial({ color: 0xff7722 });
-    const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.62, 12), dark);
-    tube.rotation.x = Math.PI / 2;
-    tube.position.set(0, 0.02, -0.32);
-    parent.add(tube);
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.02, 6, 14), glow);
-    ring.position.set(0, 0.02, -0.63);
-    parent.add(ring);
-    const sightBox = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.07, 0.12), accent);
-    sightBox.position.set(0, 0.13, -0.2);
-    parent.add(sightBox);
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.17, 0.1), accent);
-    grip.position.set(0, -0.13, 0.05);
-    grip.rotation.x = 0.32;
-    parent.add(grip);
+    // Shoulder rocket tube, olive drab with a blast ring.
+    const olive = new THREE.MeshStandardMaterial({ color: 0x474c33, roughness: 0.75, metalness: 0.15 });
+    cyl(olive, 0.075, 0.62, 0, 0.02, -0.32);
+    cyl(gunmetal, 0.082, 0.06, 0, 0.02, -0.62); // muzzle ring
+    cyl(gunmetal, 0.082, 0.06, 0, 0.02, 0.0); // breech ring
+    box(gunmetal, 0.04, 0.07, 0.12, 0, 0.13, -0.2); // sight block
+    box(polymer, 0.08, 0.16, 0.09, 0, -0.12, -0.05); // grip
     return -0.66;
   }
 
   if (w === "smelter") {
-    // The super-weapon: a fat white-hot induction cannon.
-    const glow = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 0.5), dark);
-    parent.add(body);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.5, 12), accent);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.04, -0.45);
-    parent.add(barrel);
-    for (let i = 0; i < 3; i++) {
-      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 6, 14), glow);
-      coil.position.set(0, 0.04, -0.3 - i * 0.14);
-      parent.add(coil);
-    }
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), accent);
-    grip.position.set(0, -0.16, 0.1);
-    grip.rotation.x = 0.32;
-    parent.add(grip);
+    // The Smelter: an industrial heat cannon — triple barrel cluster, and the
+    // one glow we keep: a furnace ring that says DANGER.
+    const glow = new THREE.MeshBasicMaterial({ color: 0xff9c3f });
+    box(gunmetal, 0.2, 0.2, 0.5, 0, 0, 0.05); // housing
+    cyl(gunmetal, 0.045, 0.5, 0, 0.06, -0.42);
+    cyl(gunmetal, 0.045, 0.5, -0.055, -0.03, -0.42);
+    cyl(gunmetal, 0.045, 0.5, 0.055, -0.03, -0.42);
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.018, 6, 16), glow);
+    ring.position.set(0, 0.01, -0.3);
+    parent.add(ring);
+    box(polymer, 0.1, 0.18, 0.1, 0, -0.17, 0.12); // grip
     return -0.72;
   }
 
-  if (w === "frag") {
-    // A frag charge held in the hand: dark sphere, glowing red band, arming pin.
-    const glow = new THREE.MeshBasicMaterial({ color: 0xff4455 });
-    const shell = new THREE.Mesh(
-      new THREE.SphereGeometry(0.09, 12, 12),
-      new THREE.MeshStandardMaterial({ color: 0x1a1e24, roughness: 0.35, metalness: 0.7 }),
-    );
-    shell.position.set(0, -0.04, -0.18);
-    parent.add(shell);
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 6, 14), glow);
-    band.position.copy(shell.position);
-    band.rotation.x = Math.PI / 2;
-    parent.add(band);
-    const pin = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.05, 0.02), accent);
-    pin.position.set(0, 0.07, -0.18);
-    parent.add(pin);
-    const knuckles = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.14), dark);
-    knuckles.position.set(0, -0.14, -0.1);
-    parent.add(knuckles);
-    return -0.3;
-  }
-
-  if (w === "arcwelder") {
-    // Long slim rail with a glowing teal coil stack.
-    const glow = new THREE.MeshBasicMaterial({ color: 0x33ffd0 });
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.12, 0.5), dark);
-    parent.add(body);
-    const rail = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.55, 8), accent);
-    rail.rotation.x = Math.PI / 2;
-    rail.position.set(0, 0.045, -0.45);
-    parent.add(rail);
-    for (let i = 0; i < 3; i++) {
-      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.055, 0.014, 6, 12), glow);
-      coil.position.set(0, 0.045, -0.28 - i * 0.13);
-      parent.add(coil);
-    }
-    const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.17, 0.09), accent);
-    grip.position.set(0, -0.14, 0.12);
-    grip.rotation.x = 0.32;
-    parent.add(grip);
-    return -0.74;
-  }
-
-  // Riveter (default): chunky industrial rivet-driver.
-  const glow = new THREE.MeshBasicMaterial({ color: 0xff6a22 });
-  const receiver = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.42), dark);
-  parent.add(receiver);
-  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.045, 0.34, 10), accent);
-  barrel.rotation.x = Math.PI / 2;
-  barrel.position.set(0, 0.035, -0.34);
-  parent.add(barrel);
-  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.18, 0.1), accent);
-  grip.position.set(0, -0.15, 0.12);
-  grip.rotation.x = 0.32;
-  parent.add(grip);
-  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.05, 0.08), dark);
-  sight.position.set(0, 0.115, -0.1);
-  parent.add(sight);
-  const coil = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.16), glow);
-  coil.position.set(0, -0.02, -0.3);
-  parent.add(coil);
-  return -0.54;
+  // Riveter (default): a workhorse carbine — receiver, handguard, mag, stock.
+  box(gunmetal, 0.09, 0.13, 0.36, 0, 0, 0); // receiver
+  cyl(gunmetal, 0.024, 0.3, 0, 0.035, -0.4); // barrel
+  box(polymer, 0.085, 0.09, 0.24, 0, -0.005, -0.26); // handguard
+  box(gunmetal, 0.06, 0.18, 0.09, 0, -0.13, -0.04); // curved magazine
+  box(polymer, 0.08, 0.15, 0.08, 0, -0.12, 0.12); // grip
+  box(polymer, 0.075, 0.11, 0.2, 0, -0.03, 0.26); // stock
+  box(gunmetal, 0.02, 0.05, 0.02, 0, 0.1, -0.5); // front post
+  box(gunmetal, 0.04, 0.04, 0.04, 0, 0.085, 0.08); // rear sight
+  return -0.56;
 }
 
 /** The first-person gun, rebuilt whenever the held weapon changes. */

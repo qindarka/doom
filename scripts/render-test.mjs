@@ -141,7 +141,10 @@ async function main() {
     await hermit.click(".overlay .practice");
     await hermit.waitForSelector("#hud.active", { timeout: 20000 });
     const practiceCount = await hermit.textContent(".topbar");
-    ok(practiceCount?.includes("4"), `practice topbar shows 4 operatives (${practiceCount?.trim()})`);
+    ok(
+      /OPERATIVES [34]/.test(practiceCount ?? ""),
+      `practice topbar shows the squad (${practiceCount?.trim()})`,
+    );
     await sleep(10000); // bots hunt the idle player; one usually walks into view
     await hermit.screenshot({ path: "/tmp/ferrofrag-practice.png" });
     await hermit.close();

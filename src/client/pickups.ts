@@ -38,8 +38,8 @@ function miniOrb(kind: string): THREE.Group {
 /** A medkit: dark case with a glowing cross. */
 function miniKit(): THREE.Group {
   const group = new THREE.Group();
-  const caseMat = new THREE.MeshStandardMaterial({ color: 0x2a3138, roughness: 0.45, metalness: 0.5 });
-  const cross = new THREE.MeshBasicMaterial({ color: HEALTH_COLOR });
+  const caseMat = new THREE.MeshStandardMaterial({ color: 0x44492f, roughness: 0.8, metalness: 0.1 });
+  const cross = new THREE.MeshBasicMaterial({ color: 0xe8e4d8 });
   const body = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.3, 0.42), caseMat);
   group.add(body);
   const barV = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.02, 0.3), cross);

@@ -1,6 +1,6 @@
 // Procedural canvas textures — no external assets, everything is drawn at boot.
-// All textures are authored in a grim industrial palette and tinted further by
-// material colors where needed.
+// Art direction: a war-worn industrial yard in hazy daylight. Weathered
+// concrete, olive-drab ammo crates, rusted steel — grounded, not neon.
 
 import * as THREE from "three";
 
@@ -23,18 +23,6 @@ function finalize(canvas: HTMLCanvasElement, repeatX = 1, repeatY = 1): THREE.Te
   return tex;
 }
 
-/** Speckled grime pass shared by all surfaces. */
-function grime(ctx: CanvasRenderingContext2D, size: number, amount: number, rng: () => number): void {
-  for (let i = 0; i < amount; i++) {
-    const x = rng() * size;
-    const y = rng() * size;
-    const r = rng() * 2.2 + 0.4;
-    const dark = rng() > 0.45;
-    ctx.fillStyle = dark ? `rgba(0,0,0,${0.05 + rng() * 0.14})` : `rgba(190,205,220,${0.02 + rng() * 0.05})`;
-    ctx.fillRect(x, y, r, r);
-  }
-}
-
 /** Deterministic PRNG so every client draws identical textures. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
@@ -47,91 +35,160 @@ function mulberry32(seed: number): () => number {
   };
 }
 
+/** Speckled grime + dust pass shared by all surfaces. */
+function grime(ctx: CanvasRenderingContext2D, size: number, amount: number, rng: () => number): void {
+  for (let i = 0; i < amount; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = rng() * 2.4 + 0.4;
+    const dark = rng() > 0.4;
+    ctx.fillStyle = dark
+      ? `rgba(30,25,18,${0.04 + rng() * 0.1})`
+      : `rgba(225,215,195,${0.03 + rng() * 0.05})`;
+    ctx.fillRect(x, y, r, r);
+  }
+}
+
+/** Vertical rust/water streaks dripping from a y position. */
+function streaks(
+  ctx: CanvasRenderingContext2D,
+  size: number,
+  count: number,
+  rng: () => number,
+  color = "110,66,38",
+): void {
+  for (let i = 0; i < count; i++) {
+    const x = rng() * size;
+    const y0 = rng() * size * 0.5;
+    const len = 30 + rng() * 120;
+    const w = 1.5 + rng() * 3;
+    const grad = ctx.createLinearGradient(0, y0, 0, y0 + len);
+    grad.addColorStop(0, `rgba(${color},${0.25 + rng() * 0.2})`);
+    grad.addColorStop(1, `rgba(${color},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(x, y0, w, len);
+  }
+}
+
+/** Oil-stained concrete slabs with expansion joints and cracks. */
 export function floorTexture(repeats: number): THREE.Texture {
   const size = 512;
   const [canvas, ctx] = makeCanvas(size);
   const rng = mulberry32(101);
-  const plate = size / 2;
+  const slab = size / 2;
 
-  ctx.fillStyle = "#171b21";
+  ctx.fillStyle = "#7d786c";
   ctx.fillRect(0, 0, size, size);
 
   for (let py = 0; py < 2; py++) {
     for (let px = 0; px < 2; px++) {
-      const x = px * plate;
-      const y = py * plate;
-      const shade = 18 + Math.floor(rng() * 14);
-      ctx.fillStyle = `rgb(${shade + 4},${shade + 7},${shade + 11})`;
-      ctx.fillRect(x + 2, y + 2, plate - 4, plate - 4);
+      const x = px * slab;
+      const y = py * slab;
+      const tone = 116 + Math.floor(rng() * 16);
+      ctx.fillStyle = `rgb(${tone},${tone - 5},${tone - 16})`;
+      ctx.fillRect(x + 2, y + 2, slab - 4, slab - 4);
 
-      // plate bevel
-      ctx.strokeStyle = "rgba(0,0,0,0.7)";
-      ctx.lineWidth = 4;
-      ctx.strokeRect(x + 2, y + 2, plate - 4, plate - 4);
-      ctx.strokeStyle = "rgba(150,170,190,0.10)";
-      ctx.lineWidth = 1.5;
-      ctx.strokeRect(x + 5, y + 5, plate - 10, plate - 10);
+      // expansion joints
+      ctx.strokeStyle = "rgba(40,36,30,0.8)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x + 2, y + 2, slab - 4, slab - 4);
 
-      // rivets in the corners
-      ctx.fillStyle = "rgba(8,10,12,0.9)";
-      for (const [rx, ry] of [
-        [14, 14],
-        [plate - 14, 14],
-        [14, plate - 14],
-        [plate - 14, plate - 14],
-      ]) {
+      // hairline cracks
+      for (let c = 0; c < 3; c++) {
+        if (rng() > 0.55) continue;
+        ctx.strokeStyle = "rgba(50,45,38,0.5)";
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(x + rx, y + ry, 5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.fillStyle = "rgba(170,190,210,0.18)";
-      for (const [rx, ry] of [
-        [14, 14],
-        [plate - 14, 14],
-        [14, plate - 14],
-        [plate - 14, plate - 14],
-      ]) {
-        ctx.beginPath();
-        ctx.arc(x + rx - 1, y + ry - 1, 2, 0, Math.PI * 2);
-        ctx.fill();
+        let cx = x + rng() * slab;
+        let cy = y + rng() * slab;
+        ctx.moveTo(cx, cy);
+        for (let s = 0; s < 5; s++) {
+          cx += (rng() - 0.5) * 60;
+          cy += (rng() - 0.5) * 60;
+          ctx.lineTo(cx, cy);
+        }
+        ctx.stroke();
       }
     }
   }
 
-  grime(ctx, size, 1400, rng);
+  // oil stains and tire scuffs
+  for (let i = 0; i < 9; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = 16 + rng() * 46;
+    const g = ctx.createRadialGradient(x, y, 2, x, y, r);
+    g.addColorStop(0, `rgba(28,25,20,${0.25 + rng() * 0.25})`);
+    g.addColorStop(1, "rgba(28,25,20,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  for (let i = 0; i < 5; i++) {
+    ctx.strokeStyle = `rgba(35,32,26,${0.12 + rng() * 0.12})`;
+    ctx.lineWidth = 5 + rng() * 7;
+    ctx.beginPath();
+    const y = rng() * size;
+    ctx.moveTo(0, y);
+    ctx.bezierCurveTo(size * 0.3, y + (rng() - 0.5) * 90, size * 0.7, y + (rng() - 0.5) * 90, size, y + (rng() - 0.5) * 50);
+    ctx.stroke();
+  }
+
+  grime(ctx, size, 1600, rng);
   return finalize(canvas, repeats, repeats);
 }
 
+/** Weathered precast concrete panels with rust streaks and a faded hazard base. */
 export function wallTexture(repeatX: number, repeatY: number): THREE.Texture {
   const size = 512;
   const [canvas, ctx] = makeCanvas(size);
   const rng = mulberry32(202);
 
-  ctx.fillStyle = "#1c2127";
+  ctx.fillStyle = "#8a8478";
   ctx.fillRect(0, 0, size, size);
 
-  // vertical panel ribs
-  const ribs = 8;
-  for (let i = 0; i < ribs; i++) {
-    const x = (i * size) / ribs;
-    const shade = 22 + Math.floor(rng() * 10);
-    ctx.fillStyle = `rgb(${shade + 4},${shade + 8},${shade + 13})`;
-    ctx.fillRect(x + 3, 0, size / ribs - 6, size);
-    ctx.fillStyle = "rgba(0,0,0,0.65)";
-    ctx.fillRect(x, 0, 3, size);
-    ctx.fillStyle = "rgba(150,170,190,0.07)";
-    ctx.fillRect(x + 3, 0, 2, size);
+  // panel grid with formwork seams
+  const cols = 4;
+  const rows = 2;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = (c * size) / cols;
+      const y = (r * size) / rows;
+      const tone = 128 + Math.floor(rng() * 18);
+      ctx.fillStyle = `rgb(${tone},${tone - 6},${tone - 18})`;
+      ctx.fillRect(x + 2, y + 2, size / cols - 4, size / rows - 4);
+      ctx.strokeStyle = "rgba(45,40,34,0.7)";
+      ctx.lineWidth = 3;
+      ctx.strokeRect(x + 2, y + 2, size / cols - 4, size / rows - 4);
+      // form-tie holes
+      ctx.fillStyle = "rgba(50,44,38,0.8)";
+      for (const [hx, hy] of [
+        [20, 20],
+        [size / cols - 20, 20],
+        [20, size / rows - 20],
+        [size / cols - 20, size / rows - 20],
+      ]) {
+        ctx.beginPath();
+        ctx.arc(x + hx, y + hy, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
-  // hazard band along the bottom (sits at the wall base in world space)
-  const bandH = 56;
+  streaks(ctx, size, 16, rng);
+  streaks(ctx, size, 10, rng, "60,58,52");
+
+  // faded safety stripe along the base
+  const bandH = 46;
   ctx.save();
+  ctx.globalAlpha = 0.35;
   ctx.beginPath();
   ctx.rect(0, size - bandH, size, bandH);
   ctx.clip();
-  ctx.fillStyle = "#0d0f12";
+  ctx.fillStyle = "#3a382f";
   ctx.fillRect(0, size - bandH, size, bandH);
-  ctx.fillStyle = "rgba(255,106,34,0.55)";
+  ctx.fillStyle = "#c2a23a";
   for (let x = -size; x < size * 2; x += 64) {
     ctx.beginPath();
     ctx.moveTo(x, size);
@@ -141,80 +198,128 @@ export function wallTexture(repeatX: number, repeatY: number): THREE.Texture {
     ctx.fill();
   }
   ctx.restore();
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(0, size - bandH - 3, size, 3);
 
-  grime(ctx, size, 1100, rng);
+  grime(ctx, size, 1300, rng);
   return finalize(canvas, repeatX, repeatY);
 }
 
+/** Olive-drab ammunition crate with stencil markings and edge wear. */
 export function crateTexture(): THREE.Texture {
   const size = 256;
   const [canvas, ctx] = makeCanvas(size);
   const rng = mulberry32(303);
 
-  ctx.fillStyle = "#232930";
+  ctx.fillStyle = "#4d5138";
   ctx.fillRect(0, 0, size, size);
 
-  // edge frame
-  ctx.strokeStyle = "#11151a";
-  ctx.lineWidth = 18;
-  ctx.strokeRect(9, 9, size - 18, size - 18);
-  ctx.strokeStyle = "rgba(160,180,200,0.10)";
-  ctx.lineWidth = 3;
-  ctx.strokeRect(20, 20, size - 40, size - 40);
-
-  // X brace
-  ctx.strokeStyle = "rgba(10,12,15,0.85)";
-  ctx.lineWidth = 14;
-  ctx.beginPath();
-  ctx.moveTo(24, 24);
-  ctx.lineTo(size - 24, size - 24);
-  ctx.moveTo(size - 24, 24);
-  ctx.lineTo(24, size - 24);
-  ctx.stroke();
-  ctx.strokeStyle = "rgba(190,205,220,0.08)";
+  // panel shading + frame
+  ctx.fillStyle = "rgba(255,250,230,0.05)";
+  ctx.fillRect(8, 8, size - 16, size / 2 - 8);
+  ctx.strokeStyle = "rgba(28,30,20,0.9)";
+  ctx.lineWidth = 10;
+  ctx.strokeRect(5, 5, size - 10, size - 10);
+  ctx.strokeStyle = "rgba(28,30,20,0.5)";
   ctx.lineWidth = 4;
   ctx.beginPath();
-  ctx.moveTo(24, 24);
-  ctx.lineTo(size - 24, size - 24);
-  ctx.moveTo(size - 24, 24);
-  ctx.lineTo(24, size - 24);
+  ctx.moveTo(0, size / 2);
+  ctx.lineTo(size, size / 2);
   ctx.stroke();
 
-  grime(ctx, size, 500, rng);
+  // stencil markings
+  ctx.fillStyle = "rgba(225,220,200,0.75)";
+  ctx.font = "700 26px 'Lucida Console', Monaco, monospace";
+  ctx.textAlign = "center";
+  ctx.fillText("FERROFRAG", size / 2, size / 2 - 18);
+  ctx.font = "700 17px 'Lucida Console', Monaco, monospace";
+  ctx.fillText("ORDNANCE  MK-2", size / 2, size / 2 + 28);
+  ctx.fillText("HANDLE WITH CARE", size / 2, size / 2 + 54);
+
+  // edge wear: chipped paint showing metal
+  for (let i = 0; i < 70; i++) {
+    const onEdge = rng() > 0.5;
+    const x = onEdge ? (rng() > 0.5 ? rng() * 14 : size - rng() * 14) : rng() * size;
+    const y = onEdge ? rng() * size : rng() > 0.5 ? rng() * 14 : size - rng() * 14;
+    ctx.fillStyle = `rgba(120,112,95,${0.3 + rng() * 0.4})`;
+    ctx.fillRect(x, y, 2 + rng() * 5, 1.5 + rng() * 3);
+  }
+
+  grime(ctx, size, 600, rng);
   return finalize(canvas);
 }
 
+/** Shuttered bunker concrete (the bastion, barriers). */
 export function monolithTexture(repeatX: number, repeatY: number): THREE.Texture {
   const size = 512;
   const [canvas, ctx] = makeCanvas(size);
   const rng = mulberry32(404);
 
-  ctx.fillStyle = "#15181d";
+  ctx.fillStyle = "#827d70";
   ctx.fillRect(0, 0, size, size);
 
-  // large brushed panels
-  for (let y = 0; y < 2; y++) {
-    for (let x = 0; x < 2; x++) {
-      const shade = 16 + Math.floor(rng() * 8);
-      ctx.fillStyle = `rgb(${shade + 3},${shade + 6},${shade + 10})`;
-      ctx.fillRect(x * 256 + 4, y * 256 + 4, 248, 248);
-      ctx.strokeStyle = "rgba(0,0,0,0.8)";
-      ctx.lineWidth = 5;
-      ctx.strokeRect(x * 256 + 4, y * 256 + 4, 248, 248);
-    }
+  // horizontal formwork board lines
+  for (let y = 0; y < size; y += 36) {
+    const tone = 122 + Math.floor(rng() * 14);
+    ctx.fillStyle = `rgb(${tone},${tone - 6},${tone - 17})`;
+    ctx.fillRect(0, y + 2, size, 32);
+    ctx.fillStyle = "rgba(48,44,37,0.55)";
+    ctx.fillRect(0, y, size, 2.5);
   }
 
-  // teal status slits
-  ctx.fillStyle = "rgba(0,255,200,0.5)";
-  ctx.fillRect(40, 116, 110, 5);
-  ctx.fillRect(330, 372, 110, 5);
-  ctx.fillStyle = "rgba(0,255,200,0.16)";
-  ctx.fillRect(36, 110, 118, 17);
-  ctx.fillRect(326, 366, 118, 17);
+  // patched spalls
+  for (let i = 0; i < 6; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = 10 + rng() * 26;
+    ctx.fillStyle = `rgba(105,98,84,${0.5 + rng() * 0.3})`;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
-  grime(ctx, size, 900, rng);
+  streaks(ctx, size, 14, rng);
+  grime(ctx, size, 1100, rng);
+  return finalize(canvas, repeatX, repeatY);
+}
+
+/** Rusted steel plating (decks, platforms, the shop roof). */
+export function steelTexture(repeatX: number, repeatY: number): THREE.Texture {
+  const size = 256;
+  const [canvas, ctx] = makeCanvas(size);
+  const rng = mulberry32(505);
+
+  ctx.fillStyle = "#5a544c";
+  ctx.fillRect(0, 0, size, size);
+
+  // plate seams + rivets
+  ctx.strokeStyle = "rgba(30,27,23,0.8)";
+  ctx.lineWidth = 3;
+  ctx.strokeRect(2, 2, size - 4, size - 4);
+  ctx.beginPath();
+  ctx.moveTo(size / 2, 0);
+  ctx.lineTo(size / 2, size);
+  ctx.stroke();
+  ctx.fillStyle = "rgba(25,22,18,0.9)";
+  for (let i = 0; i < 8; i++) {
+    ctx.beginPath();
+    ctx.arc(10 + (i % 4) * ((size - 20) / 3), i < 4 ? 10 : size - 10, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // rust blooms
+  for (let i = 0; i < 14; i++) {
+    const x = rng() * size;
+    const y = rng() * size;
+    const r = 6 + rng() * 26;
+    const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+    g.addColorStop(0, `rgba(122,70,38,${0.35 + rng() * 0.3})`);
+    g.addColorStop(1, "rgba(122,70,38,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  grime(ctx, size, 500, rng);
   return finalize(canvas, repeatX, repeatY);
 }
 
