@@ -153,6 +153,31 @@ body,
 .overlay .mode-row {
   display: flex;
   gap: 12px;
+  align-items: center;
+}
+
+.overlay .diff-row {
+  display: flex;
+  border: 1px solid #2a3340;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.overlay .diff {
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #5d6b7a;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+}
+
+.overlay .diff.active {
+  color: #0a0c10;
+  background: var(--accent2);
 }
 
 .overlay .practice.horde {

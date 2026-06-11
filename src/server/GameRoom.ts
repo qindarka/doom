@@ -50,7 +50,6 @@ import {
   SHIELD_REGEN_PER_S,
   SHOT_ORIGIN_DY,
   SHOT_ORIGIN_TOLERANCE,
-  SOLO_BOT_COUNT,
   SOLO_ROOM_PREFIX,
   SPEED_SLACK,
   SPEED_TOLERANCE,
@@ -103,10 +102,11 @@ import {
 import {
   BOT_ENGAGE_RANGE,
   BOT_NAMES,
-  BOT_REACTION_MS,
   BOT_SCAN_MS,
   BOT_SPEED,
   clampToArena,
+  tuningForRoom,
+  type BotTuning,
   embedded,
   findPath,
   nearestNode,
@@ -254,6 +254,7 @@ export class GameRoom extends DurableObject<Env> {
   private nadeSeq = 1;
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private botsSpawned = false;
+  private botTuning: BotTuning | null = null;
   /** Server time the secret door opened (0 = closed). */
   private doorOpenedAt = 0;
   private matchLive = true;
@@ -453,7 +454,7 @@ export class GameRoom extends DurableObject<Env> {
       yaw: restored?.yaw ?? spawn.yaw,
       pitch: 0,
       hp: restored?.hp ?? MAX_HEALTH,
-      shield: restored?.shield ?? MAX_SHIELD,
+      shield: restored?.shield ?? this.spawnShieldFor(false),
       lastDamagedAt: 0,
       dead: restored?.dead ?? false,
       kills: restored?.kills ?? 0,
@@ -1071,6 +1072,8 @@ export class GameRoom extends DurableObject<Env> {
       return false;
     }
     if (shooter && now < shooter.odUntil) dmg *= 2;
+    // Practice difficulty: bots pull their punches below Hard.
+    if (shooter?.bot && this.botTuning) dmg = Math.max(1, Math.round(dmg * this.botTuning.dmg));
     victim.lastDamagedAt = now;
 
     // Shields absorb first; the rest spills into health.
@@ -1182,7 +1185,7 @@ export class GameRoom extends DurableObject<Env> {
       p.yaw = spawn.yaw;
       p.pitch = 0;
       p.hp = MAX_HEALTH;
-      p.shield = MAX_SHIELD;
+      p.shield = this.spawnShield(p);
       p.lastDamagedAt = 0;
       p.dead = false;
       p.respawnAt = null;
@@ -1641,8 +1644,9 @@ export class GameRoom extends DurableObject<Env> {
   private ensureBots(): void {
     if (this.botsSpawned || !this.ctx.id.name?.startsWith(SOLO_ROOM_PREFIX)) return;
     this.botsSpawned = true;
+    this.botTuning = tuningForRoom(this.ctx.id.name);
     const now = Date.now();
-    for (let i = 0; i < SOLO_BOT_COUNT; i++) {
+    for (let i = 0; i < this.botTuning.count; i++) {
       const id = this.newId();
       const spawn = this.pickSpawn();
       const bot: Player = {
@@ -1656,7 +1660,7 @@ export class GameRoom extends DurableObject<Env> {
         yaw: spawn.yaw,
         pitch: 0,
         hp: MAX_HEALTH,
-        shield: MAX_SHIELD,
+        shield: this.botTuning.shield,
         lastDamagedAt: 0,
         dead: false,
         kills: 0,
@@ -1701,7 +1705,7 @@ export class GameRoom extends DurableObject<Env> {
         const prev = brain.targetId;
         brain.targetId = this.scanTarget(bot);
         if (brain.targetId && brain.targetId !== prev) {
-          brain.reactAt = now + BOT_REACTION_MS + Math.random() * 250;
+          brain.reactAt = now + (this.botTuning?.reactMs ?? 320) + Math.random() * 250;
         }
       }
 
@@ -1756,7 +1760,7 @@ export class GameRoom extends DurableObject<Env> {
 
       const mlen = Math.hypot(mx, mz);
       if (mlen > 0.01) {
-        const step = (BOT_SPEED * dt) / mlen;
+        const step = (BOT_SPEED * (this.botTuning?.speed ?? 1) * dt) / mlen;
         this.tryMoveBot(bot, brain, bot.pos.x + mx * step, bot.pos.z + mz * step);
       }
       this.checkPickups(bot, now);
@@ -1781,10 +1785,11 @@ export class GameRoom extends DurableObject<Env> {
         const def = WEAPONS[bot.weapon];
         const aim = perturbDir(
           normalize(vec3(chest.x - eyePos.x, chest.y - eyePos.y, chest.z - eyePos.z)),
-          0.02 + dist * 0.0011,
+          (0.02 + dist * 0.0011) * (this.botTuning?.aim ?? 1),
         );
         if (def.ammo !== null) bot.ammo[bot.weapon] = (bot.ammo[bot.weapon] ?? 1) - 1;
-        bot.nextShotAt = now + def.cooldownMs * (1.35 + Math.random() * 0.5);
+        bot.nextShotAt =
+          now + def.cooldownMs * (1.35 + Math.random() * 0.5) * (this.botTuning?.cooldown ?? 1);
         if (def.projectile) {
           this.spawnGrenade(bot, eyePos, aim, bot.weapon, now);
         } else {
@@ -1956,7 +1961,7 @@ export class GameRoom extends DurableObject<Env> {
         p.yaw = spawn.yaw;
         p.pitch = 0;
         p.hp = MAX_HEALTH;
-        p.shield = MAX_SHIELD;
+        p.shield = this.spawnShield(p);
         p.lastDamagedAt = 0;
         p.dead = false;
         p.respawnAt = null;
@@ -2108,6 +2113,21 @@ export class GameRoom extends DurableObject<Env> {
     scored.sort((a, b) => b.d - a.d);
     const top = scored.slice(0, 3);
     return top[Math.floor(Math.random() * top.length)].sp;
+  }
+
+  /** Spawn shield: practice difficulty hands the human a head start. */
+  private spawnShield(p: Player): number {
+    return this.spawnShieldFor(p.bot !== null);
+  }
+
+  private spawnShieldFor(isBot: boolean): number {
+    // Tuning is set lazily in ensureBots (which runs before any join completes
+    // in solo rooms), so derive it from the room name to be safe.
+    const tuning =
+      this.botTuning ??
+      (this.ctx.id.name?.startsWith(SOLO_ROOM_PREFIX) ? tuningForRoom(this.ctx.id.name) : null);
+    if (!tuning) return MAX_SHIELD;
+    return isBot ? tuning.shield : tuning.playerShield;
   }
 
   private pickColor(): number {

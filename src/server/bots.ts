@@ -10,10 +10,40 @@ import { aabbIntersects, playerAABB, vec3 } from "../shared/math";
 
 export const BOT_NAMES = ["RIVET-7", "SLAG-9", "FLUX-3", "GRIND-5", "WELD-2", "SCRAP-8"];
 
-export const BOT_SPEED = 6.5; // m/s, a touch slower than humans
+export const BOT_SPEED = 6.5; // m/s baseline, scaled by difficulty
 export const BOT_SCAN_MS = 250; // how often bots re-evaluate targets
-export const BOT_REACTION_MS = 320; // delay between seeing and first shot
 export const BOT_ENGAGE_RANGE = 55;
+
+/** Practice difficulty, chosen on the landing page (room name carries it). */
+export interface BotTuning {
+  count: number;
+  /** Multiplier on BOT_SPEED. */
+  speed: number;
+  /** Delay between seeing a target and the first shot, ms. */
+  reactMs: number;
+  /** Multiplier on aim error (higher = worse shots). */
+  aim: number;
+  /** Multiplier on time between shots. */
+  cooldown: number;
+  /** Multiplier on damage dealt by bots. */
+  dmg: number;
+  /** Bot starting shield. */
+  shield: number;
+  /** The human's starting shield (the learner's head start). */
+  playerShield: number;
+}
+
+export const BOT_TUNINGS: Record<"easy" | "normal" | "hard", BotTuning> = {
+  easy: { count: 2, speed: 0.65, reactMs: 900, aim: 3.0, cooldown: 2.2, dmg: 0.5, shield: 0, playerShield: 100 },
+  normal: { count: 3, speed: 0.85, reactMs: 500, aim: 1.6, cooldown: 1.5, dmg: 0.75, shield: 25, playerShield: 75 },
+  hard: { count: 3, speed: 1.0, reactMs: 320, aim: 1.0, cooldown: 1.0, dmg: 1.0, shield: 50, playerShield: 50 },
+};
+
+export function tuningForRoom(roomName: string | undefined): BotTuning {
+  if (roomName?.startsWith("solo-easy")) return BOT_TUNINGS.easy;
+  if (roomName?.startsWith("solo-hard")) return BOT_TUNINGS.hard;
+  return BOT_TUNINGS.normal;
+}
 
 export interface BotBrain {
   targetId: string | null;

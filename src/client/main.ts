@@ -55,6 +55,27 @@ const practiceBtn = document.createElement("button");
 practiceBtn.className = "practice";
 practiceBtn.textContent = "Practice vs bots";
 
+// Practice difficulty: remembered, defaults to easy (learn first, sweat later).
+const DIFF_KEY = "ferrofrag.botdiff";
+let botDiff = localStorage.getItem(DIFF_KEY) ?? "easy";
+if (!["easy", "normal", "hard"].includes(botDiff)) botDiff = "easy";
+const diffRow = document.createElement("div");
+diffRow.className = "diff-row";
+const diffButtons = new Map<string, HTMLButtonElement>();
+for (const level of ["easy", "normal", "hard"] as const) {
+  const b = document.createElement("button");
+  b.className = "diff";
+  b.textContent = level.toUpperCase();
+  b.addEventListener("click", () => {
+    botDiff = level;
+    localStorage.setItem(DIFF_KEY, level);
+    for (const [k, btn] of diffButtons) btn.classList.toggle("active", k === level);
+  });
+  diffButtons.set(level, b);
+  diffRow.appendChild(b);
+}
+diffButtons.get(botDiff)?.classList.add("active");
+
 const hordeBtn = document.createElement("button");
 hordeBtn.className = "practice horde";
 hordeBtn.textContent = "Horde co-op";
@@ -99,7 +120,7 @@ if ("ontouchstart" in window) {
 
 const modeRow = document.createElement("div");
 modeRow.className = "mode-row";
-modeRow.append(practiceBtn, hordeBtn);
+modeRow.append(practiceBtn, diffRow, hordeBtn);
 
 overlay.append(title, subtitle, joinRow, modeRow, statusLine, hint, musicBtn);
 app.append(overlay);
@@ -184,8 +205,8 @@ function join(room: string | null = null): void {
 
 joinBtn.addEventListener("click", () => join());
 practiceBtn.addEventListener("click", () => {
-  // A fresh private room per practice session.
-  join(`${SOLO_ROOM_PREFIX}${crypto.randomUUID().slice(0, 12)}`);
+  // A fresh private room per practice session; the name carries the difficulty.
+  join(`${SOLO_ROOM_PREFIX}${botDiff}-${crypto.randomUUID().slice(0, 12)}`);
 });
 hordeBtn.addEventListener("click", () => join(HORDE_ROOM));
 nameInput.addEventListener("keydown", (e) => {
